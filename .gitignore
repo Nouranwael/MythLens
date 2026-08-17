@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Notebooks
+.ipynb_checkpoints/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local datasets and generated artifacts
+data/**/*.csv
+data/**/*.json
+data/**/*.jsonl
+data/**/*.parquet
+data/**/*.zip
+data/**/*.pdf
+vector_db/
+models/
+outputs/
+temp/
+
+# Keep directory placeholders
+!data/**/.gitkeep
