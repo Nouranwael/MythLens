@@ -1,1 +1,4 @@
-# Add shared Python dependencies here as modules are finalized.
+yt-dlp
+faster-whisper
+pydub
+imageio-ffmpeg
