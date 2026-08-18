@@ -6,9 +6,27 @@ MEDICAL_KEYWORDS = [
     "pain", "fever", "cough", "remedy", "wound", "allergy", "pregnant",
     "metformin", "diabetes", "insulin", "gluconeogenesis", "hypoglycemia",
     "type 2", "glucose", "glycemic", "therapy", "clinical", "drug", "pharmacological",
+    "alcohol", "immune", "virus", "milk", "bone", "bones", "wine", "cold weather",
+    "strong bones", "broken bones", "good for you", "make you sick", "immune system",
+    "disease", "health", "nutrition", "vitamin", "sick", "infection", "probiotic",
+    "water", "hydration", "hydrated", "fluid", "eight glasses", "daily intake",
+    "vegetables", "fruits", "exercise", "body guide", "dehydration", "thirst",
+    "cancer", "radiation", "x-ray", "xray", "microwave", "coffee", "breakfast",
+    "growth", "anxiety", "sleep", "electromagnetic", "ionizing", "non-ionizing",
+    "health myth", "myth", "health myths", "risk", "benefit", "danger",
     "علاج", "دواء", "أعراض", "عدوى", "تشخيص", "طبيب", "سعال", "حمى",
-    "ألم", "شفاء", "جرح", "حساسية", "حمل", "سكري", "غلوكوز", "أنسولين", "ميتفورمين"
+    "ألم", "شفاء", "جرح", "حساسية", "حمل", "سكري", "غلوكوز", "أنسولين", "ميتفورمين",
+    "كحول", "مناعة", "فيروس", "حليب", "عظام", "نبيذ", "مريض", "صحة", "تغذية",
+    "ماء", "ترطيب", "سائل", "ثمانية أكواب", "نباتات", "فاكهة", "تمارين", "جفاف",
+    "سرطان", "إشعاع", "قهوة", "فطور", "أرق", "قلق", "مناعة"
 ]
+
+
+def _contains_medical_context(text: str) -> bool:
+    if text is None:
+        return False
+    lower = str(text).lower()
+    return any(keyword.lower() in lower for keyword in MEDICAL_KEYWORDS)
 
 
 def _strip_non_important_symbols(text: str) -> str:
@@ -49,7 +67,7 @@ def _split_atomic_clauses(sentence: str):
         chunks = re.split(r"\s+(?:و|لكن|حيث|كما|ولا)\s+", text)
     else:
         chunks = re.split(
-            r"(?<=[,;])\s+|\s+(?:and|or|but|which|where|while|however|therefore|thus|since|because|although)\s+",
+            r"(?<=[.!?])\s+|(?<=[,;])\s+|\s+(?:and|or|but|which|where|while|however|therefore|thus|since|because|although)\s+",
             text,
             flags=re.IGNORECASE,
         )
@@ -59,10 +77,26 @@ def _split_atomic_clauses(sentence: str):
         chunk = re.sub(r"^[\s,;:]+|[\s,;:]+$", "", str(chunk))
         if not chunk:
             continue
-        if len(chunk.split()) < 3:
+
+        cleaned = re.sub(r"\s+", " ", chunk).strip()
+        if len(cleaned.split()) < 3:
             continue
-        if any(keyword.lower() in chunk.lower() for keyword in MEDICAL_KEYWORDS):
-            fragments.append(chunk.rstrip(". "))
+
+        lower = cleaned.lower()
+        if any(pattern in lower for pattern in [
+            "let your body guide you",
+            "i just wanted to clarify",
+            "it can't be the same",
+            "well, big, small",
+            "whatnot",
+            "so the point is",
+            "you guessed it",
+            "this tagline was invented",
+        ]):
+            continue
+
+        if _contains_medical_context(cleaned):
+            fragments.append(cleaned.rstrip(". "))
     return fragments
 
 
@@ -100,8 +134,7 @@ def extract_claims(text: str):
     seen = set()
 
     for sentence in sentences:
-        lower = sentence.lower()
-        if not any(keyword.lower() in lower for keyword in MEDICAL_KEYWORDS):
+        if not _contains_medical_context(sentence):
             continue
 
         candidate_clauses = _split_atomic_clauses(sentence)
@@ -112,11 +145,24 @@ def extract_claims(text: str):
             clause_text = re.sub(r"\s+", " ", str(clause).strip())
             if not clause_text:
                 continue
-            if len(clause_text.split()) < 4:
+            if len(clause_text.split()) < 3:
                 continue
-            if clause_text.lower() in seen:
+
+            lower_clause = clause_text.lower()
+            if any(pattern in lower_clause for pattern in [
+                "let your body guide you",
+                "i just wanted to clarify",
+                "it can't be the same",
+                "well, big, small",
+                "whatnot",
+                "so the point is",
+                "you guessed it",
+                "this tagline was invented",
+            ]):
                 continue
-            seen.add(clause_text.lower())
+            if lower_clause in seen:
+                continue
+            seen.add(lower_clause)
             claims.append(
                 {
                     "original_claim": clause_text,
@@ -125,14 +171,15 @@ def extract_claims(text: str):
                 }
             )
 
-    if not claims and text.strip():
+    if not claims and text.strip() and _contains_medical_context(text):
         fallback = re.sub(r"\s+", " ", str(text).strip())
-        claims.append(
-            {
-                "original_claim": fallback,
-                "normalized_claim": fallback,
-                "medical_query": generate_medical_query(fallback),
-            }
-        )
+        if len(fallback.split()) >= 4:
+            claims.append(
+                {
+                    "original_claim": fallback,
+                    "normalized_claim": fallback,
+                    "medical_query": generate_medical_query(fallback),
+                }
+            )
 
     return claims
