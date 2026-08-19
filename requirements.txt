@@ -16,5 +16,10 @@ torch
 google-genai
 scikit-learn
 
+# Web API / frontend serving
+fastapi
+uvicorn
+python-multipart
+
 # Configuration
 python-dotenv
