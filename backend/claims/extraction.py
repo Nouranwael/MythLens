@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import re
-from typing import Optional
+
+from backend.llm.client import chat_text
 
 MEDICAL_KEYWORDS = [
     "treatment", "cure", "healing", "medicine", "medication", "symptom", "infection", "diagnosis",
@@ -73,27 +73,15 @@ def _split_atomic_clauses(sentence: str):
     return [chunk.strip().rstrip(". ") for chunk in chunks if len(chunk.strip().split()) >= 3 and _contains_medical_context(chunk)]
 
 
-def _llm_biomedical_query(arabic_claim: str) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        model = os.getenv("OPENAI_QUERY_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini"))
-        response = client.chat.completions.create(
-            model=model,
-            temperature=0,
-            messages=[
-                {"role": "system", "content": "Convert an Egyptian/Arabic medical claim into a concise English biomedical PubMed search query. Preserve intervention, condition, claimed effect, population, dose and duration when present. Output only the query."},
-                {"role": "user", "content": arabic_claim},
-            ],
-        )
-        query = (response.choices[0].message.content or "").strip().strip('"')
+def _llm_biomedical_query(arabic_claim: str):
+    query = chat_text(
+        "Convert an Egyptian/Arabic medical claim into a concise English biomedical PubMed search query. Preserve intervention, condition, claimed effect, population, dose and duration when present. Output only the query.",
+        arabic_claim,
+    )
+    if query:
+        query = query.strip().strip('"')
         if query and not ARABIC_RANGE.search(query):
             return re.sub(r"\s+", " ", query)
-    except Exception:
-        return None
     return None
 
 
