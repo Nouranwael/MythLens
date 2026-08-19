@@ -13,7 +13,7 @@ def _debug(message: str) -> None:
 
 
 def _model_for(purpose: str) -> str:
-    default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+    default_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
     purpose = (purpose or "general").strip().lower()
     if purpose == "query":
         return os.getenv("GEMINI_QUERY_MODEL", default_model).strip() or default_model
@@ -42,7 +42,6 @@ def _gemini_chat(
         max_tokens = 256 if purpose == "query" else 1024
         config_kwargs: Dict[str, Any] = {
             "system_instruction": system,
-            "temperature": 0,
             "max_output_tokens": max_tokens,
         }
         if json_mode:
