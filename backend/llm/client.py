@@ -1,31 +1,10 @@
-"""Shared LLM client with Ollama-over-HTTP support and optional OpenAI fallback."""
+"""Shared Gemini LLM client for MythLens."""
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional
-
-import requests
-
-
-def _ollama_base_url() -> str:
-    return os.getenv("OLLAMA_BASE_URL", "").strip().rstrip("/")
-
-
-def _ollama_model(purpose: str = "default") -> str:
-    if purpose == "query":
-        return os.getenv("OLLAMA_QUERY_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b")).strip()
-    if purpose == "verifier":
-        return os.getenv("OLLAMA_VERIFIER_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:3b")).strip()
-    return os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
-
-
-def _ollama_messages(system: str, user: str) -> List[Dict[str, str]]:
-    return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
+from typing import Any, Dict, Optional
 
 
 def _debug(message: str) -> None:
@@ -33,82 +12,67 @@ def _debug(message: str) -> None:
         print(f"[MythLens LLM] {message}")
 
 
-def _ollama_chat(system: str, user: str, json_mode: bool = False, purpose: str = "default") -> Optional[str]:
-    base = _ollama_base_url()
-    if not base:
-        _debug("OLLAMA_BASE_URL is empty")
-        return None
-
-    payload: Dict[str, Any] = {
-        "model": _ollama_model(purpose),
-        "messages": _ollama_messages(system, user),
-        "stream": False,
-        "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "10m"),
-        "options": {"temperature": 0},
-    }
-    if json_mode:
-        payload["format"] = "json"
-
-    headers = {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true",
-    }
-
-    timeout = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
-    try:
-        response = requests.post(
-            f"{base}/api/chat",
-            json=payload,
-            headers=headers,
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = str(data.get("message", {}).get("content", "")).strip()
-        if not content:
-            _debug(f"Ollama returned no message content: {data}")
-        return content or None
-    except Exception as exc:
-        _debug(f"Ollama request failed ({purpose}/{_ollama_model(purpose)}): {type(exc).__name__}: {exc}")
-        return None
+def _model_for(purpose: str) -> str:
+    default_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip()
+    purpose = (purpose or "general").strip().lower()
+    if purpose == "query":
+        return os.getenv("GEMINI_QUERY_MODEL", default_model).strip() or default_model
+    if purpose in {"verify", "verifier", "verification"}:
+        return os.getenv("GEMINI_VERIFIER_MODEL", default_model).strip() or default_model
+    return default_model
 
 
-def _openai_chat(system: str, user: str, json_mode: bool = False) -> Optional[str]:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
+def _gemini_chat(
+    system: str,
+    user: str,
+    *,
+    json_mode: bool = False,
+    purpose: str = "general",
+) -> Optional[str]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
+        _debug("GEMINI_API_KEY is empty")
         return None
-    try:
-        from openai import OpenAI
 
-        client = OpenAI(api_key=api_key)
-        model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-        kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=api_key)
+        max_tokens = 256 if purpose == "query" else 1024
+        config_kwargs: Dict[str, Any] = {
+            "system_instruction": system,
             "temperature": 0,
+            "max_output_tokens": max_tokens,
         }
         if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        response = client.chat.completions.create(**kwargs)
-        return (response.choices[0].message.content or "").strip() or None
+            config_kwargs["response_mime_type"] = "application/json"
+
+        response = client.models.generate_content(
+            model=_model_for(purpose),
+            contents=user,
+            config=types.GenerateContentConfig(**config_kwargs),
+        )
+        text = (response.text or "").strip()
+        if not text:
+            _debug("Gemini returned an empty response")
+            return None
+        return text
     except Exception as exc:
-        _debug(f"OpenAI fallback failed: {type(exc).__name__}: {exc}")
+        _debug(f"Gemini request failed: {type(exc).__name__}: {exc}")
         return None
 
 
-def chat_text(system: str, user: str, purpose: str = "default") -> Optional[str]:
-    return _ollama_chat(system, user, json_mode=False, purpose=purpose) or _openai_chat(system, user, json_mode=False)
+def chat_text(system: str, user: str, *, purpose: str = "general") -> Optional[str]:
+    return _gemini_chat(system, user, json_mode=False, purpose=purpose)
 
 
-def chat_json(system: str, user: str, purpose: str = "default") -> Optional[Dict[str, Any]]:
-    raw = _ollama_chat(system, user, json_mode=True, purpose=purpose) or _openai_chat(system, user, json_mode=True)
+def chat_json(system: str, user: str, *, purpose: str = "verifier") -> Optional[Dict[str, Any]]:
+    raw = _gemini_chat(system, user, json_mode=True, purpose=purpose)
     if not raw:
         return None
     try:
         return json.loads(raw)
     except Exception as exc:
-        _debug(f"Could not parse LLM JSON: {type(exc).__name__}: {exc}; raw={raw[:500]!r}")
+        _debug(f"Could not parse Gemini JSON: {type(exc).__name__}: {exc}; raw={raw[:500]!r}")
         return None
