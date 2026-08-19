@@ -13,7 +13,7 @@ requests
 torch
 
 # Member 3 — verification / evaluation
-openai
+google-genai
 scikit-learn
 
 # Configuration
