@@ -13,8 +13,12 @@ def _ollama_base_url() -> str:
     return os.getenv("OLLAMA_BASE_URL", "").strip().rstrip("/")
 
 
-def _ollama_model() -> str:
-    return os.getenv("OLLAMA_MODEL", "qwen2.5:7b").strip()
+def _ollama_model(purpose: str = "default") -> str:
+    if purpose == "query":
+        return os.getenv("OLLAMA_QUERY_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b")).strip()
+    if purpose == "verifier":
+        return os.getenv("OLLAMA_VERIFIER_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:3b")).strip()
+    return os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
 
 
 def _ollama_messages(system: str, user: str) -> List[Dict[str, str]]:
@@ -29,33 +33,34 @@ def _debug(message: str) -> None:
         print(f"[MythLens LLM] {message}")
 
 
-def _ollama_chat(system: str, user: str, json_mode: bool = False) -> Optional[str]:
+def _ollama_chat(system: str, user: str, json_mode: bool = False, purpose: str = "default") -> Optional[str]:
     base = _ollama_base_url()
     if not base:
         _debug("OLLAMA_BASE_URL is empty")
         return None
 
     payload: Dict[str, Any] = {
-        "model": _ollama_model(),
+        "model": _ollama_model(purpose),
         "messages": _ollama_messages(system, user),
         "stream": False,
+        "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "10m"),
         "options": {"temperature": 0},
     }
     if json_mode:
         payload["format"] = "json"
 
-    # This header skips ngrok's browser-warning interstitial for API traffic.
     headers = {
         "Content-Type": "application/json",
         "ngrok-skip-browser-warning": "true",
     }
 
+    timeout = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
     try:
         response = requests.post(
             f"{base}/api/chat",
             json=payload,
             headers=headers,
-            timeout=180,
+            timeout=timeout,
         )
         response.raise_for_status()
         data = response.json()
@@ -64,7 +69,7 @@ def _ollama_chat(system: str, user: str, json_mode: bool = False) -> Optional[st
             _debug(f"Ollama returned no message content: {data}")
         return content or None
     except Exception as exc:
-        _debug(f"Ollama request failed: {type(exc).__name__}: {exc}")
+        _debug(f"Ollama request failed ({purpose}/{_ollama_model(purpose)}): {type(exc).__name__}: {exc}")
         return None
 
 
@@ -94,12 +99,12 @@ def _openai_chat(system: str, user: str, json_mode: bool = False) -> Optional[st
         return None
 
 
-def chat_text(system: str, user: str) -> Optional[str]:
-    return _ollama_chat(system, user, json_mode=False) or _openai_chat(system, user, json_mode=False)
+def chat_text(system: str, user: str, purpose: str = "default") -> Optional[str]:
+    return _ollama_chat(system, user, json_mode=False, purpose=purpose) or _openai_chat(system, user, json_mode=False)
 
 
-def chat_json(system: str, user: str) -> Optional[Dict[str, Any]]:
-    raw = _ollama_chat(system, user, json_mode=True) or _openai_chat(system, user, json_mode=True)
+def chat_json(system: str, user: str, purpose: str = "default") -> Optional[Dict[str, Any]]:
+    raw = _ollama_chat(system, user, json_mode=True, purpose=purpose) or _openai_chat(system, user, json_mode=True)
     if not raw:
         return None
     try:
