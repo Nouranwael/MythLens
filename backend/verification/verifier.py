@@ -1,9 +1,9 @@
 """Evidence-grounded medical claim verification for MythLens."""
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Dict, List
+
+from backend.llm.client import chat_json
 
 ALLOWED_VERDICTS = {"SUPPORTED", "REFUTED", "MISLEADING", "UNPROVEN"}
 
@@ -18,28 +18,6 @@ def _citation_objects(evidence: List[Dict[str, Any]]) -> List[Dict[str, str]]:
     return [{"source": str(e.get("source", "")), "title": str(e.get("title", "")), "url": str(e.get("url", "")), "pmid": str(e.get("pmid", ""))} for e in evidence[:5]]
 
 
-def _call_llm_json(prompt: str):
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        model = os.getenv("OPENAI_VERIFIER_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini"))
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a conservative medical fact-checking verifier. Use ONLY supplied evidence. If evidence is insufficient or conflicting choose UNPROVEN. Return valid JSON only."},
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.0,
-        )
-        return json.loads(response.choices[0].message.content)
-    except Exception:
-        return None
-
-
 def verify_claim(claim: Any, evidence: List[Dict[str, Any]]) -> Dict[str, Any]:
     text = _claim_text(claim)
     evidence = evidence or []
@@ -51,8 +29,11 @@ def verify_claim(claim: Any, evidence: List[Dict[str, Any]]) -> Dict[str, Any]:
         f"[{i+1}] Source: {e.get('source','')}\nTitle: {e.get('title','')}\nStudy type: {e.get('study_type','')}\nEvidence: {e.get('text','')}\nURL: {e.get('url','')}"
         for i, e in enumerate(evidence[:5])
     )
-    prompt = f"""Medical claim:\n{text}\n\nRetrieved evidence:\n{evidence_text}\n\nChoose exactly one verdict: SUPPORTED, REFUTED, MISLEADING, or UNPROVEN. Return JSON with verdict, confidence from 0 to 1, explanation_ar, insufficient_evidence."""
-    result = _call_llm_json(prompt)
+    user_prompt = f"""Medical claim:\n{text}\n\nRetrieved evidence:\n{evidence_text}\n\nChoose exactly one verdict: SUPPORTED, REFUTED, MISLEADING, or UNPROVEN. Return JSON with verdict, confidence from 0 to 1, explanation_ar, insufficient_evidence."""
+    result = chat_json(
+        "You are a conservative medical fact-checking verifier. Use ONLY supplied evidence. If evidence is insufficient or conflicting choose UNPROVEN. Return valid JSON only.",
+        user_prompt,
+    )
     if not result:
         return {"verdict": "UNPROVEN", "confidence": 0.0, "explanation_ar": "الأدلة اتجمعت، لكن أداة التحقق مش متاحة دلوقتي؛ عشان كده مش هنفترض حكم طبي من غير تحقق.", "citations": citations, "insufficient_evidence": True}
 
