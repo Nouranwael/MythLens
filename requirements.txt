@@ -1,4 +1,20 @@
+# Member 1 — ingestion / transcription
 yt-dlp
 faster-whisper
 pydub
 imageio-ffmpeg
+
+# Member 2 — medical RAG
+faiss-cpu
+sentence-transformers
+rank-bm25
+numpy
+requests
+torch
+
+# Member 3 — verification / evaluation
+openai
+scikit-learn
+
+# Configuration
+python-dotenv
