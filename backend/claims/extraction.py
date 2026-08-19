@@ -83,24 +83,32 @@ def _required_glossary_terms(arabic_claim: str):
     return required
 
 
-def _llm_biomedical_query(arabic_claim: str):
-    required_terms = _required_glossary_terms(arabic_claim)
+def _llm_biomedical_query(claim: str):
+    is_arabic = bool(ARABIC_RANGE.search(claim))
+    required_terms = _required_glossary_terms(claim) if is_arabic else []
     glossary_hint = ", ".join(required_terms) if required_terms else "none"
+
     query = chat_text(
-        "Convert an Egyptian/Arabic medical claim into a concise English biomedical PubMed search query. Preserve intervention, condition, claimed effect, population, dose and duration when present. Output only the query. Never translate ثوم as thymus; ثوم means garlic.",
-        f"Claim: {arabic_claim}\nRequired biomedical terms from glossary: {glossary_hint}",
+        "Convert the medical claim into a concise English PubMed search query. Use key biomedical concepts and useful MeSH-style Boolean terms when helpful. Preserve intervention, condition, claimed effect, population, dose and duration when present. Output ONLY the query, with no explanation. If the claim is Arabic, translate medical concepts accurately. Never translate ثوم as thymus; ثوم means garlic.",
+        f"Claim: {claim}\nRequired biomedical terms from glossary: {glossary_hint}",
         purpose="query",
     )
-    if query:
-        query = query.strip().strip('"')
-        if query and not ARABIC_RANGE.search(query):
-            query = re.sub(r"\bthymus\b", "garlic", query, flags=re.IGNORECASE) if "garlic" in required_terms else query
-            lower_query = query.lower()
-            missing = [term for term in required_terms if term not in lower_query]
-            if missing:
-                query = f"{query} {' '.join(missing)}"
-            return re.sub(r"\s+", " ", query)
-    return None
+    if not query:
+        return None
+
+    query = query.strip().strip('"')
+    if not query or ARABIC_RANGE.search(query):
+        return None
+
+    if "garlic" in required_terms:
+        query = re.sub(r"\bthymus\b", "garlic", query, flags=re.IGNORECASE)
+
+    lower_query = query.lower()
+    missing = [term for term in required_terms if term not in lower_query]
+    if missing:
+        query = f"{query} {' '.join(missing)}"
+
+    return re.sub(r"\s+", " ", query)
 
 
 def _fallback_arabic_query(arabic_claim: str) -> str:
@@ -115,11 +123,15 @@ def generate_medical_query(claim: str) -> str:
     cleaned = re.sub(r"\s+", " ", str(claim or "").strip()).rstrip(". ")
     if not cleaned:
         return "clinical evidence for medical claim"
+
+    llm_query = _llm_biomedical_query(cleaned)
+    if llm_query:
+        return llm_query
+
     if ARABIC_RANGE.search(cleaned):
-        return _llm_biomedical_query(cleaned) or _fallback_arabic_query(cleaned)
-    if not any(keyword in cleaned.lower() for keyword in ["evidence", "clinical", "treatment", "symptom", "infection", "diagnosis", "metformin", "diabetes", "insulin", "hypoglycemia"]):
-        return f"clinical evidence for {cleaned}"
-    return cleaned
+        return _fallback_arabic_query(cleaned)
+
+    return f"clinical evidence {cleaned}"
 
 
 def extract_claims(text: str):
