@@ -1,10 +1,19 @@
-"""Shared Gemini LLM client for MythLens using the current Interactions API."""
+"""Shared Gemini REST client for MythLens.
+
+Uses the Interactions API directly with the x-goog-api-key header so both
+standard and authorization (AQ...) Gemini API keys work without SDK auth
+translation issues.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 from typing import Any, Dict, Optional
+
+import requests
+
+GEMINI_INTERACTIONS_URL = "https://generativelanguage.googleapis.com/v1beta/interactions"
 
 
 def _debug(message: str) -> None:
@@ -22,6 +31,18 @@ def _model_for(purpose: str) -> str:
     return default_model
 
 
+def _extract_interaction_text(data: Dict[str, Any]) -> Optional[str]:
+    texts = []
+    for step in data.get("steps", []) or []:
+        if step.get("type") != "model_output":
+            continue
+        for item in step.get("content", []) or []:
+            if item.get("type") == "text" and item.get("text"):
+                texts.append(str(item["text"]))
+    text = "\n".join(texts).strip()
+    return text or None
+
+
 def _gemini_chat(
     system: str,
     user: str,
@@ -34,26 +55,44 @@ def _gemini_chat(
         _debug("GEMINI_API_KEY is empty")
         return None
 
+    payload: Dict[str, Any] = {
+        "model": _model_for(purpose),
+        "input": user,
+        "system_instruction": system,
+        "store": False,
+        "generation_config": {
+            "thinking_level": "minimal",
+            "max_output_tokens": 256 if purpose == "query" else 1024,
+        },
+    }
+    if json_mode:
+        payload["response_format"] = {
+            "type": "text",
+            "mime_type": "application/json",
+        }
+
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+
     try:
-        from google import genai
-
-        client = genai.Client(api_key=api_key)
-
-        prompt = f"SYSTEM INSTRUCTIONS:\n{system.strip()}\n\nUSER INPUT:\n{user.strip()}"
-        if json_mode:
-            prompt += "\n\nReturn ONLY one valid JSON object. Do not use markdown fences or add any text before or after the JSON."
-
-        interaction = client.interactions.create(
-            model=_model_for(purpose),
-            input=prompt,
+        response = requests.post(
+            GEMINI_INTERACTIONS_URL,
+            headers=headers,
+            json=payload,
+            timeout=90,
         )
-        text = (interaction.output_text or "").strip()
-        if not text:
-            _debug("Gemini Interactions API returned an empty response")
+        if not response.ok:
+            _debug(f"Gemini REST failed: HTTP {response.status_code}: {response.text[:800]}")
             return None
+        data = response.json()
+        text = _extract_interaction_text(data)
+        if not text:
+            _debug(f"Gemini REST returned no model text: {data}")
         return text
     except Exception as exc:
-        _debug(f"Gemini Interactions request failed: {type(exc).__name__}: {exc}")
+        _debug(f"Gemini REST request failed: {type(exc).__name__}: {exc}")
         return None
 
 
