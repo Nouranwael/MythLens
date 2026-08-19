@@ -69,8 +69,47 @@ def simplify_medical_query(query):
         "new", "study", "studies", "review", "reviews", "report", "reports", "reported",
         "find", "finds", "found", "says", "say", "shows", "show", "experts", "issue",
         "issued", "gets", "get", "may", "lukewarm", "promising", "breakthrough", "major", "big", "deal",
+        "mesh", "sh", "and", "or", "not",
     }
     return " ".join(w for w in query.split() if w not in filler)
+
+
+def _clean_pubmed_term(value):
+    value = re.sub(r"\[[^\]]+\]", " ", str(value))
+    value = re.sub(r"[\"'()]", " ", value)
+    value = re.sub(r"\b(?:AND|OR|NOT)\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value).strip(" -")
+    return value
+
+
+def build_relaxed_queries(query):
+    """Create progressively broader fallbacks for over-specific MeSH/Boolean queries."""
+    raw = str(query or "").strip()
+    if not raw:
+        return []
+
+    groups = re.split(r"\s+AND\s+", raw, flags=re.IGNORECASE)
+    concepts = []
+    for group in groups:
+        alternatives = re.split(r"\s+OR\s+", group, flags=re.IGNORECASE)
+        first = _clean_pubmed_term(alternatives[0] if alternatives else group)
+        first = simplify_medical_query(first)
+        if first and first not in concepts:
+            concepts.append(first)
+
+    relaxed = []
+    # The first two concepts usually capture intervention + condition and give
+    # PubMed a useful broad fallback when a full fact-check query is too strict.
+    for size in (2, 3, len(concepts)):
+        if len(concepts) >= size and size > 0:
+            candidate = " ".join(concepts[:size]).strip()
+            if candidate and candidate not in relaxed:
+                relaxed.append(candidate)
+
+    fully_cleaned = simplify_medical_query(_clean_pubmed_term(raw))
+    if fully_cleaned and fully_cleaned not in relaxed:
+        relaxed.append(fully_cleaned)
+    return relaxed
 
 
 def search_pubmed(query, retmax=20):
@@ -82,18 +121,27 @@ def search_pubmed(query, retmax=20):
 
 
 def search_pubmed_multi_query(medical_query, retmax_per_query=20):
-    queries = [medical_query, build_pubmed_query(medical_query), simplify_medical_query(medical_query)]
+    queries = [
+        medical_query,
+        build_pubmed_query(medical_query),
+        simplify_medical_query(medical_query),
+        *build_relaxed_queries(medical_query),
+    ]
     unique_queries = []
     for query in queries:
         query = str(query).strip()
         if query and query not in unique_queries:
             unique_queries.append(query)
+
     all_pmids = []
     for query in unique_queries:
         try:
             for pmid in search_pubmed(query, retmax=retmax_per_query):
                 if pmid not in all_pmids:
                     all_pmids.append(pmid)
+            # Once we have a healthy candidate pool, avoid unnecessary PubMed calls.
+            if len(all_pmids) >= retmax_per_query:
+                break
         except Exception:
             continue
     return all_pmids
