@@ -25,3 +25,14 @@ Each teammate can prototype their module in Google Colab. Once a component is st
 ## Important Rule
 
 Do not commit API keys, secrets, large raw datasets, downloaded model weights, or generated vector databases. Use `.env` locally and keep only `.env.example` in the repository.
+
+## Groq claim extraction
+
+Claim extraction uses Groq's `qwen/qwen3.6-27b` by default to understand Arabic and English transcripts. The transcript is cleaned locally first, then sent only to the claim-extraction prompt. Set the key in a local `.env` file or the process environment:
+
+```text
+GROQ_API_KEY=your-key-here
+GROQ_MODEL=qwen/qwen3.6-27b
+```
+
+If `GROQ_API_KEY` is missing or the request fails, the existing local extractor is used instead.

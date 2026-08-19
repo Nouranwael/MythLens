@@ -45,21 +45,26 @@ def _find_ffmpeg_binary() -> str:
 
 
 def _download_video_from_url(url: str, output_dir: str) -> str:
+    ffmpeg_path = _find_ffmpeg_binary()
+    ffmpeg_dir = os.path.dirname(ffmpeg_path)
+    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+
     ydl_opts = {
-        "format": "bestvideo+bestaudio/best",
-        "outtmpl": os.path.join(output_dir, "downloaded_video.%(ext)s"),
+        "format": "bestaudio/best",
+        "outtmpl": os.path.join(output_dir, "downloaded_audio.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
         "restrictfilenames": False,
+        "ffmpeg_location": ffmpeg_dir,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.extract_info(url, download=True)
 
-    matches = glob.glob(os.path.join(output_dir, "downloaded_video.*"))
+    matches = glob.glob(os.path.join(output_dir, "downloaded_audio.*"))
     if not matches:
-        raise RuntimeError(f"No video file was created for URL: {url}")
+        raise RuntimeError(f"No downloadable audio file was created for URL: {url}")
     return sorted(matches)[0]
 
 

@@ -1,4 +1,16 @@
+import json
+import os
 import re
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
 
 MEDICAL_KEYWORDS = [
     "treatment", "cure", "healing", "medicine", "medication", "symptom",
@@ -20,6 +32,93 @@ MEDICAL_KEYWORDS = [
     "ماء", "ترطيب", "سائل", "ثمانية أكواب", "نباتات", "فاكهة", "تمارين", "جفاف",
     "سرطان", "إشعاع", "قهوة", "فطور", "أرق", "قلق", "مناعة"
 ]
+
+GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+
+
+def _get_groq_client():
+    if load_dotenv is not None:
+        load_dotenv()
+
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or Groq is None:
+        return None
+    return Groq(api_key=api_key)
+
+
+def _extract_claims_with_groq(text: str):
+    client = _get_groq_client()
+    if client is None:
+        return None
+
+    system_prompt = """You extract health-related claims from transcripts in Arabic, English, or mixed language.
+Return only one valid JSON object with this shape: {\"claims\": [{\"original_claim\": \"...\", \"normalized_claim\": \"...\", \"medical_query\": \"...\"}]}.
+Rules:
+- Use only information explicitly stated in the transcript. Do not add facts or correct the speaker.
+- Include medical claims and general health advice, myths, risks, benefits, symptoms, prevention, nutrition, medication, and treatment claims.
+- Exclude greetings, opinions without a health assertion, advertisements, narration, and filler.
+- Split separate assertions into atomic claims. Keep enough context for each claim to stand alone.
+- Preserve Arabic claims in Arabic and English claims in English in original_claim and normalized_claim.
+- Keep normalized_claim concise while preserving the speaker's meaning.
+- Write medical_query in concise English suitable for PubMed or guideline search. Translate Arabic claims when needed.
+- Do not include reasoning, markdown, or any text outside the JSON object.
+- If there are no health-related claims, return {\"claims\": []}."""
+
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", GROQ_MODEL),
+            temperature=0.1,
+            reasoning_format="hidden",
+            max_completion_tokens=4096,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": _strip_non_important_symbols(text)},
+            ],
+        )
+        content = response.choices[0].message.content or "{}"
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(r"```(?:json)?", "", content, flags=re.IGNORECASE).replace("```", "").strip()
+        decoder = json.JSONDecoder()
+        payloads = []
+        for match in re.finditer(r"\{", content):
+            try:
+                candidate, _ = decoder.raw_decode(content[match.start():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict) and isinstance(candidate.get("claims"), list):
+                payloads.append(candidate)
+        if not payloads:
+            return None
+        payload = max(payloads, key=lambda item: len(item.get("claims", [])))
+    except Exception:
+        return None
+
+    raw_claims = payload.get("claims", []) if isinstance(payload, dict) else []
+    if not isinstance(raw_claims, list):
+        return None
+
+    claims = []
+    seen = set()
+    for item in raw_claims:
+        if not isinstance(item, dict):
+            continue
+        original = re.sub(r"\s+", " ", str(item.get("original_claim", "")).strip())
+        normalized = re.sub(r"\s+", " ", str(item.get("normalized_claim", original)).strip())
+        query = re.sub(r"\s+", " ", str(item.get("medical_query", "")).strip())
+        if not original or not normalized or not query:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(
+            {
+                "original_claim": original.rstrip(". "),
+                "normalized_claim": normalized.rstrip(". "),
+                "medical_query": query.rstrip(". "),
+            }
+        )
+    return claims
 
 
 def _contains_medical_context(text: str) -> bool:
@@ -125,11 +224,19 @@ def generate_medical_query(claim: str) -> str:
 
 
 def extract_claims(text: str):
-    """Extract atomic medical claims from a transcript or text input."""
+    """Extract claims with Groq, falling back to the local extractor when unavailable."""
     if text is None:
         return []
 
-    sentences = _split_sentences(text)
+    cleaned_text = _strip_non_important_symbols(text)
+    if not cleaned_text:
+        return []
+
+    llm_claims = _extract_claims_with_groq(cleaned_text)
+    if llm_claims is not None:
+        return llm_claims
+
+    sentences = _split_sentences(cleaned_text)
     claims = []
     seen = set()
 
@@ -171,8 +278,8 @@ def extract_claims(text: str):
                 }
             )
 
-    if not claims and text.strip() and _contains_medical_context(text):
-        fallback = re.sub(r"\s+", " ", str(text).strip())
+    if not claims and cleaned_text and _contains_medical_context(cleaned_text):
+        fallback = re.sub(r"\s+", " ", cleaned_text)
         if len(fallback.split()) >= 4:
             claims.append(
                 {

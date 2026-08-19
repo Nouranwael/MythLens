@@ -2,3 +2,5 @@ yt-dlp
 faster-whisper
 pydub
 imageio-ffmpeg
+groq
+python-dotenv
