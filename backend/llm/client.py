@@ -24,9 +24,15 @@ def _ollama_messages(system: str, user: str) -> List[Dict[str, str]]:
     ]
 
 
+def _debug(message: str) -> None:
+    if os.getenv("MYTHLENS_LLM_DEBUG", "").strip().lower() in {"1", "true", "yes"}:
+        print(f"[MythLens LLM] {message}")
+
+
 def _ollama_chat(system: str, user: str, json_mode: bool = False) -> Optional[str]:
     base = _ollama_base_url()
     if not base:
+        _debug("OLLAMA_BASE_URL is empty")
         return None
 
     payload: Dict[str, Any] = {
@@ -38,13 +44,27 @@ def _ollama_chat(system: str, user: str, json_mode: bool = False) -> Optional[st
     if json_mode:
         payload["format"] = "json"
 
+    # This header skips ngrok's browser-warning interstitial for API traffic.
+    headers = {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+    }
+
     try:
-        response = requests.post(f"{base}/api/chat", json=payload, timeout=180)
+        response = requests.post(
+            f"{base}/api/chat",
+            json=payload,
+            headers=headers,
+            timeout=180,
+        )
         response.raise_for_status()
         data = response.json()
         content = str(data.get("message", {}).get("content", "")).strip()
+        if not content:
+            _debug(f"Ollama returned no message content: {data}")
         return content or None
-    except Exception:
+    except Exception as exc:
+        _debug(f"Ollama request failed: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -69,7 +89,8 @@ def _openai_chat(system: str, user: str, json_mode: bool = False) -> Optional[st
             kwargs["response_format"] = {"type": "json_object"}
         response = client.chat.completions.create(**kwargs)
         return (response.choices[0].message.content or "").strip() or None
-    except Exception:
+    except Exception as exc:
+        _debug(f"OpenAI fallback failed: {type(exc).__name__}: {exc}")
         return None
 
 
@@ -83,5 +104,6 @@ def chat_json(system: str, user: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         return json.loads(raw)
-    except Exception:
+    except Exception as exc:
+        _debug(f"Could not parse LLM JSON: {type(exc).__name__}: {exc}; raw={raw[:500]!r}")
         return None
