@@ -33,6 +33,7 @@ def verify_claim(claim: Any, evidence: List[Dict[str, Any]]) -> Dict[str, Any]:
     result = chat_json(
         "You are a conservative medical fact-checking verifier. Use ONLY supplied evidence. If evidence is insufficient or conflicting choose UNPROVEN. Return valid JSON only.",
         user_prompt,
+        purpose="verification",
     )
     if not result:
         return {"verdict": "UNPROVEN", "confidence": 0.0, "explanation_ar": "الأدلة اتجمعت، لكن أداة التحقق مش متاحة دلوقتي؛ عشان كده مش هنفترض حكم طبي من غير تحقق.", "citations": citations, "insufficient_evidence": True}
