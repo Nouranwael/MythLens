@@ -12,6 +12,11 @@ Workflow:
   3) Score the reviewed file:
        python scripts/evaluate_hybrid_rag.py --score outputs/hybrid_eval/review.json
 
+The score command also generates a presentation-ready evaluation dashboard at:
+  outputs/hybrid_eval/hybrid_rag_dashboard.png
+and copies it to:
+  docs/images/mythlens-evaluation-dashboard.png
+
 This evaluates the production mixed-source retriever fairly because both PubMed
 and local evidence receive human relevance judgments rather than requiring every
 result to match a PubMed PMID.
@@ -20,9 +25,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
+
+import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,6 +41,16 @@ from backend.rag.retriever import retrieve_evidence
 
 DEFAULT_QUERIES = ROOT / "data" / "hybrid_eval_queries.json"
 DEFAULT_OUTPUT_DIR = ROOT / "outputs" / "hybrid_eval"
+README_IMAGE_DIR = ROOT / "docs" / "images"
+
+# Baseline measured on the same 12-query benchmark before retrieval optimization.
+BASELINE_STANDARD = {
+    "precision@5": 0.45,
+    "recall@5": 0.3919,
+    "mrr": 0.5833,
+    "ndcg@5": 0.4925,
+    "retrieval_coverage": 0.6667,
+}
 
 
 def evidence_id(item: dict[str, Any], rank: int) -> str:
@@ -133,6 +151,82 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     return deduped
 
 
+def create_dashboard(result: dict[str, Any], output_dir: Path) -> Path:
+    """Create a single-plot dashboard for the final retrieval evaluation."""
+    aggregate = result["aggregate"]
+    strict = result["strict_aggregate"]
+
+    labels = [
+        "Standard\nPrecision@5",
+        "Strict\nPrecision@5",
+        "Standard\nRecall@5",
+        "Strict\nRecall@5",
+        "Standard\nMRR",
+        "Strict\nMRR",
+        "Standard\nnDCG@5",
+        "Strict\nnDCG@5",
+        "Retrieval\nCoverage",
+        "Direct Evidence\nCoverage@5",
+    ]
+    values = [
+        aggregate.get("precision@5", 0.0),
+        strict.get("strict_precision@5", 0.0),
+        aggregate.get("recall@5", 0.0),
+        strict.get("strict_recall@5", 0.0),
+        aggregate.get("mrr", 0.0),
+        strict.get("strict_mrr", 0.0),
+        aggregate.get("ndcg@5", 0.0),
+        strict.get("strict_ndcg@5", 0.0),
+        aggregate.get("retrieval_coverage", 0.0),
+        strict.get("direct_relevance_coverage@5", 0.0),
+    ]
+    percentages = [value * 100 for value in values]
+
+    fig = plt.figure(figsize=(15, 7.5))
+    ax = fig.add_axes([0.07, 0.20, 0.90, 0.68])
+    bars = ax.bar(range(len(labels)), percentages)
+    ax.set_title("MythLens Hybrid RAG Evaluation", fontsize=18, fontweight="bold", pad=18)
+    ax.set_ylabel("Score (%)")
+    ax.set_ylim(0, 108)
+    ax.set_xticks(range(len(labels)))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.grid(axis="y", alpha=0.25)
+
+    for bar, value in zip(bars, percentages):
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            min(value + 2.0, 104),
+            f"{value:.1f}%",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+        )
+
+    baseline_text = (
+        "Before optimization — Precision@5 45.0% | Recall@5 39.2% | "
+        "MRR 58.3% | nDCG@5 49.3% | Coverage 66.7%"
+    )
+    fig.text(0.5, 0.08, baseline_text, ha="center", fontsize=10)
+    fig.text(
+        0.5,
+        0.035,
+        "12 manually judged medical queries • Standard: relevance 1–2 • Strict: relevance 2 only",
+        ha="center",
+        fontsize=9,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    dashboard_path = output_dir / "hybrid_rag_dashboard.png"
+    fig.savefig(dashboard_path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+    README_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    readme_dashboard = README_IMAGE_DIR / "mythlens-evaluation-dashboard.png"
+    shutil.copyfile(dashboard_path, readme_dashboard)
+    return dashboard_path
+
+
 def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
     payload = json.loads(review_path.read_text(encoding="utf-8"))
     query_items = payload.get("queries", [])
@@ -187,6 +281,7 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
         "relevance_scale": {"0": "irrelevant", "1": "partial", "2": "direct"},
         "top_k": top_k,
         "judged_pool": "Unique top candidates stored in review.json for each query",
+        "baseline_before_optimization": BASELINE_STANDARD,
         "aggregate": standard_aggregate,
         "strict_aggregate": strict_aggregate,
         "per_query": per_query,
@@ -200,6 +295,10 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
             "This evaluates retrieval relevance; final verdict correctness requires a separate labeled claim-verdict set.",
         ],
     }
+    result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    dashboard_path = create_dashboard(result, output_dir)
+    result["dashboard"] = str(dashboard_path)
+    result["readme_dashboard"] = str(README_IMAGE_DIR / "mythlens-evaluation-dashboard.png")
     result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     return result_path
 
@@ -226,6 +325,8 @@ def main() -> int:
     result = json.loads(path.read_text(encoding="utf-8"))
     print(json.dumps({
         "result": str(path),
+        "dashboard": result.get("dashboard"),
+        "readme_dashboard": result.get("readme_dashboard"),
         "aggregate": result["aggregate"],
         "strict_aggregate": result["strict_aggregate"],
     }, indent=2))
