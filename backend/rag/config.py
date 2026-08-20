@@ -15,7 +15,12 @@ METADATA_PATH = Path(
     os.getenv("MYTHLENS_METADATA_PATH", str(VECTOR_PATH / "chunk_metadata.pkl"))
 ).expanduser().resolve()
 
-EMBEDDING_MODEL_NAME = os.getenv("MYTHLENS_EMBEDDING_MODEL", "pritamdeka/S-PubMedBert-MS-MARCO")
+# RAG v2 baseline: lightweight, fast 384-dimension embeddings.
+# Override from .env when running another experiment.
+EMBEDDING_MODEL_NAME = os.getenv(
+    "MYTHLENS_EMBEDDING_MODEL",
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
 RERANKER_MODEL_NAME = os.getenv("MYTHLENS_RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L6-v2")
 
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
