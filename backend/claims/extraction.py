@@ -99,6 +99,44 @@ def _parse_groq_claim_payload(content: str):
     return max(payloads, key=lambda item: len(item.get("claims", [])), default=None)
 
 
+def _clean_groq_summary(content: str) -> str:
+    """Return only user-facing summary text and reject leaked model reasoning."""
+    raw = str(content or "")
+    cleaned = re.sub(r"<think\b[^>]*>.*?</think>", "", raw, flags=re.DOTALL | re.IGNORECASE)
+
+    # An unmatched <think> means the reasoning block was truncated/leaked. Never
+    # expose it to the UI; fail closed so the caller can return a safe error.
+    if re.search(r"<think\b", cleaned, flags=re.IGNORECASE):
+        return ""
+
+    cleaned = re.sub(r"```(?:text|markdown)?", "", cleaned, flags=re.IGNORECASE).replace("```", "")
+    cleaned = re.sub(
+        r"^\s*(?:summary|final answer|final|الملخص|ملخص)\s*:?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \"'")
+
+    reasoning_markers = (
+        "analyze user input",
+        "thinking process",
+        "mental refinement",
+        "self-correction",
+        "check constraints",
+        "draft 1",
+        "draft 2",
+        "draft 3",
+        "i'll go with",
+        "let's try",
+    )
+    lower = cleaned.casefold()
+    if any(marker in lower for marker in reasoning_markers):
+        return ""
+
+    return cleaned
+
+
 def _extract_claims_with_groq(text: str):
     """Extract claims with Groq; do not silently replace the LLM with heuristics."""
     client = _get_groq_client()
@@ -188,17 +226,16 @@ def summarize_with_groq(text: str, language: str = "", claims: list[dict] | None
         response = client.chat.completions.create(
             model=os.getenv("GROQ_MODEL", GROQ_MODEL),
             temperature=0.1,
-            reasoning_format="raw",
-            max_completion_tokens=2048,
+            reasoning_format="hidden",
+            max_completion_tokens=512,
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": _strip_non_important_symbols(text) + claim_context},
             ],
         )
-        summary = re.sub(r"<think>.*?</think>", "", response.choices[0].message.content or "", flags=re.DOTALL | re.IGNORECASE)
-        summary = re.sub(r"\s+", " ", summary).strip(" \"'")
+        summary = _clean_groq_summary(response.choices[0].message.content or "")
         if not summary:
-            raise GroqSummaryError("Groq returned an empty summary.")
+            raise GroqSummaryError("Groq returned reasoning or an empty summary instead of clean user-facing text.")
         return summary
     except GroqSummaryError:
         raise
