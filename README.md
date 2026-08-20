@@ -40,14 +40,14 @@ The pipeline separates evidence retrieval, verdict generation, and clinical safe
 - Arabic and Egyptian Arabic processing
 - Groq-based health claim extraction and summarization
 - PubMed-focused medical query generation
-- Hybrid retrieval with local vector search, BM25, and live PubMed fallback
+- Hybrid retrieval with local FAISS, BM25, and live PubMed
 - Evidence re-ranking by relevance and study quality
 - Evidence-grounded verification using Gemini
 - Verdicts: `SUPPORTED`, `REFUTED`, `MISLEADING`, `UNPROVEN`
 - Independent clinical safety assessment: `LOW`, `MODERATE`, `HIGH`, `CRITICAL`
 - PubMed citations with PMID and source links
 - FastAPI backend with a lightweight web interface
-- Retrieval/evaluation utilities for hackathon reporting
+- Reproducible retrieval evaluation utilities
 
 ## System Flow
 
@@ -64,7 +64,7 @@ Medical query generation
         ↓
 Hybrid RAG: FAISS + BM25 + PubMed
         ↓
-Re-ranking
+Cross-encoder re-ranking
         ↓
 Evidence-grounded verification
         ↓
@@ -72,6 +72,23 @@ Clinical safety assessment
         ↓
 Structured fact-check result + citations
 ```
+
+## Final RAG V2 Configuration
+
+After comparing multiple embedding, chunking, and reranking configurations, the final retrieval setup is:
+
+| Component | Final Configuration |
+| --- | --- |
+| Embedding model | `sentence-transformers/all-MiniLM-L6-v2` |
+| Chunk size | `180 words` |
+| Chunk overlap | `30 words` |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L6-v2` |
+| Final Top-K | `5` |
+| Local candidate pool | `20` |
+| PubMed candidate pool | `20` |
+| FAISS candidate pool | `50` |
+
+The original local embedding model was `pritamdeka/S-PubMedBert-MS-MARCO`. RAG V2 adopts MiniLM because it produced the strongest overall retrieval performance on the final judged benchmark while remaining lightweight and fast.
 
 ## Tech Stack
 
@@ -103,10 +120,11 @@ MythLens/
 │   └── main.py           # end-to-end integration
 ├── frontend/             # web interface
 ├── docs/
-│   └── images/           # README screenshots, architecture, evaluation dashboard
-├── data/                 # evaluation queries and local dataset documentation
+│   └── images/           # screenshots, architecture, evaluation dashboard
+├── data/                 # local/evaluation data (large files ignored by Git)
 ├── scripts/
-│   ├── evaluate_rag.py          # baseline RAG/evaluation report utility
+│   ├── build_rag_v2.py          # build the final local FAISS store
+│   ├── evaluate_rag.py          # baseline evaluation utility
 │   └── evaluate_hybrid_rag.py   # manually judged Hybrid RAG evaluation
 ├── .env.example
 ├── .gitignore
@@ -165,6 +183,16 @@ MYTHLENS_LLM_DEBUG=false
 
 Never commit `.env` or real API keys.
 
+## Build the Final Local RAG Store
+
+The large source datasets and generated FAISS files are intentionally not committed to GitHub. With the required local datasets placed under `data/`, build the final RAG V2 store with:
+
+```bash
+python scripts/build_rag_v2.py --model sentence-transformers/all-MiniLM-L6-v2 --chunk-size 180 --overlap 30 --output-dir backend/rag/vector_store
+```
+
+The application defaults to this final MiniLM configuration through `backend/rag/config.py`.
+
 ## Run the Web App
 
 ```bash
@@ -196,24 +224,24 @@ uvicorn backend.api:app --reload --port 8001
 
 Interactive API documentation is available at `/docs` while the server is running.
 
-## Evaluation Results
+## Final Retrieval Evaluation
 
-MythLens was evaluated on a manually judged 12-query medical retrieval benchmark. Each query retrieved a pool of evidence from the mixed-source Hybrid RAG pipeline, and each candidate was labeled on a graded relevance scale:
+MythLens RAG V2 was evaluated on a manually judged 12-query medical retrieval benchmark. Each query produced a 10-candidate evidence pool and every candidate was assigned one of three relevance grades:
 
 - `0` — irrelevant
-- `1` — partially/supportively relevant
-- `2` — directly relevant
+- `1` — partially relevant / useful supporting context
+- `2` — directly relevant medical evidence
 
-Standard metrics treat relevance grades `1` and `2` as relevant. Strict metrics count only grade `2` as relevant.
+Standard metrics treat grades `1` and `2` as relevant. Strict metrics count only grade `2` as relevant.
 
 | Metric | Standard | Strict |
 | --- | ---: | ---: |
-| Precision@5 | **83.33%** | **46.67%** |
-| Recall@5 | **59.17%** | **62.51%*** |
-| MRR | **100.00%** | **65.28%** |
-| nDCG@5 | **77.99%** | **60.08%** |
+| Precision@5 | **88.33%** | **56.67%** |
+| Recall@5 | **61.48%** | **82.40%*** |
+| MRR | **100.00%** | **68.33%** |
+| nDCG@5 | **86.32%** | **71.24%** |
 | Retrieval Coverage | **100.00%** | — |
-| Direct Evidence Coverage@5 | — | **83.33%** |
+| Direct Evidence Coverage@5 | — | **91.67%** |
 
 \* Strict Recall is averaged over the 11 queries whose judged candidate pool contained at least one directly relevant (`grade 2`) result.
 
@@ -221,17 +249,24 @@ Standard metrics treat relevance grades `1` and `2` as relevant. Strict metrics 
   <img src="docs/images/hybrid_rag_dashboard.png" alt="MythLens Hybrid RAG evaluation dashboard" width="96%" />
 </p>
 
-### Retrieval Improvement
+### RAG V2 Improvement over the Previous Embedding Setup
 
-The retrieval pipeline was improved with broader PubMed query fallback, query expansion, deduplication, and revised cross-encoder ranking behavior. On the same 12-query evaluation setup, the standard metrics changed as follows:
+The same evaluation methodology was used to compare the previous retrieval setup with the final MiniLM RAG V2 configuration.
 
-| Metric | Before Optimization | After Optimization |
+| Metric | Previous Setup | Final RAG V2 |
 | --- | ---: | ---: |
-| Precision@5 | 45.00% | **83.33%** |
-| Recall@5 | 39.19% | **59.17%** |
-| MRR | 58.33% | **100.00%** |
-| nDCG@5 | 49.25% | **77.99%** |
-| Retrieval Coverage | 66.67% | **100.00%** |
+| Precision@5 | 83.33% | **88.33%** |
+| Recall@5 | 59.17% | **61.48%** |
+| MRR | 100.00% | **100.00%** |
+| nDCG@5 | 77.99% | **86.32%** |
+| Retrieval Coverage | 100.00% | **100.00%** |
+| Strict Precision@5 | 46.67% | **56.67%** |
+| Strict Recall@5 | 62.51% | **82.40%** |
+| Strict MRR | 65.28% | **68.33%** |
+| Strict nDCG@5 | 60.08% | **71.24%** |
+| Direct Evidence Coverage@5 | 83.33% | **91.67%** |
+
+The final RAG V2 therefore improves both top-five relevance and ranking quality while preserving complete retrieval coverage on the benchmark.
 
 The reported Recall@5 values are calculated over the manually judged candidate pool, not over the entire PubMed/local corpus. Retrieval evaluation is separate from final verdict correctness, which requires a labeled claim-verdict test set.
 
@@ -249,21 +284,7 @@ After assigning `relevance` values (`0`, `1`, or `2`) in `outputs/hybrid_eval/re
 python scripts/evaluate_hybrid_rag.py --score outputs/hybrid_eval/review.json
 ```
 
-The score command generates:
-
-```text
-outputs/hybrid_eval/hybrid_rag_metrics.json
-outputs/hybrid_eval/hybrid_rag_dashboard.png
-docs/images/hybrid_rag_dashboard.png
-```
-
-A baseline utility is also available:
-
-```bash
-python scripts/evaluate_rag.py --load-models --live-pubmed
-```
-
-Generated evaluation outputs, model files, vector indexes, and large datasets are intentionally excluded from Git. Presentation images under `docs/images/` can be committed explicitly when needed.
+Generated evaluation outputs, model files, vector indexes, experiment stores, and large datasets are intentionally excluded from Git.
 
 ## Medical Safety
 
@@ -271,6 +292,6 @@ MythLens is a fact-checking and decision-support prototype, not a diagnostic sys
 
 ## Security and Repository Hygiene
 
-- `.env`, credentials, local virtual environments, caches, model files, generated vector assets, and large datasets are ignored by Git.
+- `.env`, credentials, local virtual environments, caches, model files, generated vector assets, experiment outputs, and large datasets are ignored by Git.
 - Only `.env.example` is committed for configuration guidance.
 - No API keys are required to be stored in source files.
