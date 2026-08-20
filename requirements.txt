@@ -1,11 +1,10 @@
-# Member 1 — ingestion / transcription
+# Media ingestion / transcription
 yt-dlp
 faster-whisper
-pydub
 imageio-ffmpeg
 groq
 
-# Member 2 — medical RAG
+# Medical RAG
 faiss-cpu
 sentence-transformers
 rank-bm25
@@ -13,8 +12,7 @@ numpy
 requests
 torch
 
-# Member 3 — verification / evaluation
-google-genai
+# Evaluation
 scikit-learn
 matplotlib
 
