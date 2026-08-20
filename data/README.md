@@ -1,9 +1,7 @@
 # Data
 
-This directory keeps lightweight placeholders and documentation for MythLens data sources. Large datasets should not be committed to GitHub.
+Large datasets and generated medical knowledge-base assets are intentionally not committed to this repository.
 
-Planned areas:
-- `guidelines/` - selected WHO/CDC/FDA guidance for the static medical knowledge base.
-- `pubhealth/` - PUBHEALTH benchmark files stored locally during evaluation.
-- `healthfc/` - HealthFC benchmark files stored locally during evaluation.
-- `egyptian_myths/` - the team's Egyptian Arabic medical-misinformation evaluation set.
+During local development or evaluation, place dataset files under `data/` as needed. Typical sources used with MythLens include selected medical guidelines, PUBHEALTH, HealthFC, and a custom Egyptian Arabic medical-misinformation evaluation set.
+
+The project also supports live PubMed retrieval, so a local copy of PubMed is not required.
