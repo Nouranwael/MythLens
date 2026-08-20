@@ -1,0 +1,39 @@
+[
+  {
+    "query": "garlic blood pressure cardiovascular risk",
+    "relevant_ids": [
+      "19017826",
+      "32010325",
+      "35193446",
+      "26656227"
+    ]
+  },
+  {
+    "query": "caffeine children sleep anxiety",
+    "relevant_ids": [
+      "32260589",
+      "35051809",
+      "26508718",
+      "27073610",
+      "19482732"
+    ]
+  },
+  {
+    "query": "microwave radiation cancer risk",
+    "relevant_ids": [
+      "39241333",
+      "36767440",
+      "39200630",
+      "14508584"
+    ]
+  },
+  {
+    "query": "metformin type 2 diabetes treatment",
+    "relevant_ids": [
+      "30230172",
+      "16153370",
+      "16034881",
+      "22509138"
+    ]
+  }
+]
