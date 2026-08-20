@@ -103,10 +103,11 @@ MythLens/
 │   └── main.py           # end-to-end integration
 ├── frontend/             # web interface
 ├── docs/
-│   └── images/           # README screenshots and architecture diagram
-├── data/                 # local dataset locations/documentation
+│   └── images/           # README screenshots, architecture, evaluation dashboard
+├── data/                 # evaluation queries and local dataset documentation
 ├── scripts/
-│   └── evaluate_rag.py   # RAG/evaluation report utility
+│   ├── evaluate_rag.py          # baseline RAG/evaluation report utility
+│   └── evaluate_hybrid_rag.py   # manually judged Hybrid RAG evaluation
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt
@@ -195,22 +196,74 @@ uvicorn backend.api:app --reload --port 8001
 
 Interactive API documentation is available at `/docs` while the server is running.
 
-## Evaluation
+## Evaluation Results
 
-The repository includes retrieval and RAG evaluation utilities:
+MythLens was evaluated on a manually judged 12-query medical retrieval benchmark. Each query retrieved a pool of evidence from the mixed-source Hybrid RAG pipeline, and each candidate was labeled on a graded relevance scale:
+
+- `0` — irrelevant
+- `1` — partially/supportively relevant
+- `2` — directly relevant
+
+Standard metrics treat relevance grades `1` and `2` as relevant. Strict metrics count only grade `2` as relevant.
+
+| Metric | Standard | Strict |
+| --- | ---: | ---: |
+| Precision@5 | **83.33%** | **46.67%** |
+| Recall@5 | **59.17%** | **62.51%*** |
+| MRR | **100.00%** | **65.28%** |
+| nDCG@5 | **77.99%** | **60.08%** |
+| Retrieval Coverage | **100.00%** | — |
+| Direct Evidence Coverage@5 | — | **83.33%** |
+
+\* Strict Recall is averaged over the 11 queries whose judged candidate pool contained at least one directly relevant (`grade 2`) result.
+
+<p align="center">
+  <img src="docs/images/mythlens-evaluation-dashboard.png" alt="MythLens Hybrid RAG evaluation dashboard" width="96%" />
+</p>
+
+### Retrieval Improvement
+
+The retrieval pipeline was improved with broader PubMed query fallback, query expansion, deduplication, and revised cross-encoder ranking behavior. On the same 12-query evaluation setup, the standard metrics changed as follows:
+
+| Metric | Before Optimization | After Optimization |
+| --- | ---: | ---: |
+| Precision@5 | 45.00% | **83.33%** |
+| Recall@5 | 39.19% | **59.17%** |
+| MRR | 58.33% | **100.00%** |
+| nDCG@5 | 49.25% | **77.99%** |
+| Retrieval Coverage | 66.67% | **100.00%** |
+
+The reported Recall@5 values are calculated over the manually judged candidate pool, not over the entire PubMed/local corpus. Retrieval evaluation is separate from final verdict correctness, which requires a labeled claim-verdict test set.
+
+### Reproduce the Hybrid RAG Evaluation
+
+Prepare candidate evidence for manual relevance review:
 
 ```bash
-python scripts/evaluate_rag.py
+python scripts/evaluate_hybrid_rag.py --prepare
 ```
 
-Optional examples:
+After assigning `relevance` values (`0`, `1`, or `2`) in `outputs/hybrid_eval/review.json`, calculate both standard and strict metrics and regenerate the dashboard:
 
 ```bash
-python scripts/evaluate_rag.py --load-models --output-dir outputs/rag_eval
-python scripts/evaluate_rag.py --ground-truth data/rag_eval.json --live-pubmed
+python scripts/evaluate_hybrid_rag.py --score outputs/hybrid_eval/review.json
 ```
 
-Generated evaluation outputs, model files, vector indexes, and large datasets are intentionally excluded from Git.
+The score command generates:
+
+```text
+outputs/hybrid_eval/hybrid_rag_metrics.json
+outputs/hybrid_eval/hybrid_rag_dashboard.png
+docs/images/mythlens-evaluation-dashboard.png
+```
+
+A baseline utility is also available:
+
+```bash
+python scripts/evaluate_rag.py --load-models --live-pubmed
+```
+
+Generated evaluation outputs, model files, vector indexes, and large datasets are intentionally excluded from Git. Presentation images under `docs/images/` can be committed explicitly when needed.
 
 ## Medical Safety
 
