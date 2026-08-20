@@ -15,7 +15,7 @@ Workflow:
 The score command also generates a presentation-ready evaluation dashboard at:
   outputs/hybrid_eval/hybrid_rag_dashboard.png
 and copies it to:
-  docs/images/mythlens-evaluation-dashboard.png
+  docs/images/hybrid_rag_dashboard.png
 
 This evaluates the production mixed-source retriever fairly because both PubMed
 and local evidence receive human relevance judgments rather than requiring every
@@ -222,7 +222,7 @@ def create_dashboard(result: dict[str, Any], output_dir: Path) -> Path:
     plt.close(fig)
 
     README_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    readme_dashboard = README_IMAGE_DIR / "mythlens-evaluation-dashboard.png"
+    readme_dashboard = README_IMAGE_DIR / "hybrid_rag_dashboard.png"
     shutil.copyfile(dashboard_path, readme_dashboard)
     return dashboard_path
 
@@ -298,7 +298,7 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
     result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     dashboard_path = create_dashboard(result, output_dir)
     result["dashboard"] = str(dashboard_path)
-    result["readme_dashboard"] = str(README_IMAGE_DIR / "mythlens-evaluation-dashboard.png")
+    result["readme_dashboard"] = str(README_IMAGE_DIR / "hybrid_rag_dashboard.png")
     result_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     return result_path
 
