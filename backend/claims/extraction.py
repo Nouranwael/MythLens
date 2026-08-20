@@ -1,52 +1,83 @@
+"""Medical claim extraction and retrieval-query generation."""
+
+from __future__ import annotations
+
 import json
 import os
 import re
 
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None
+from dotenv import load_dotenv
+
+from backend.llm.client import chat_text
 
 try:
     from groq import Groq
 except ImportError:
     Groq = None
 
+load_dotenv()
+
 MEDICAL_KEYWORDS = [
-    "treatment", "cure", "healing", "medicine", "medication", "symptom",
-    "infection", "diagnosis", "doctor", "hospital", "viral", "bacterial",
-    "pain", "fever", "cough", "remedy", "wound", "allergy", "pregnant",
-    "metformin", "diabetes", "insulin", "gluconeogenesis", "hypoglycemia",
-    "type 2", "glucose", "glycemic", "therapy", "clinical", "drug", "pharmacological",
-    "alcohol", "immune", "virus", "milk", "bone", "bones", "wine", "cold weather",
-    "strong bones", "broken bones", "good for you", "make you sick", "immune system",
-    "disease", "health", "nutrition", "vitamin", "sick", "infection", "probiotic",
-    "water", "hydration", "hydrated", "fluid", "eight glasses", "daily intake",
-    "vegetables", "fruits", "exercise", "body guide", "dehydration", "thirst",
-    "cancer", "radiation", "x-ray", "xray", "microwave", "coffee", "breakfast",
-    "growth", "anxiety", "sleep", "electromagnetic", "ionizing", "non-ionizing",
-    "health myth", "myth", "health myths", "risk", "benefit", "danger",
-    "علاج", "دواء", "أعراض", "عدوى", "تشخيص", "طبيب", "سعال", "حمى",
-    "ألم", "شفاء", "جرح", "حساسية", "حمل", "سكري", "غلوكوز", "أنسولين", "ميتفورمين",
-    "كحول", "مناعة", "فيروس", "حليب", "عظام", "نبيذ", "مريض", "صحة", "تغذية",
-    "ماء", "ترطيب", "سائل", "ثمانية أكواب", "نباتات", "فاكهة", "تمارين", "جفاف",
-    "سرطان", "إشعاع", "قهوة", "فطور", "أرق", "قلق", "مناعة"
+    "treatment", "cure", "healing", "medicine", "medication", "symptom", "infection", "diagnosis",
+    "doctor", "hospital", "viral", "bacterial", "pain", "fever", "cough", "remedy", "wound",
+    "allergy", "pregnant", "metformin", "diabetes", "insulin", "gluconeogenesis", "hypoglycemia",
+    "type 2", "glucose", "glycemic", "therapy", "clinical", "drug", "pharmacological", "alcohol",
+    "immune", "virus", "milk", "bone", "bones", "wine", "cold weather", "strong bones",
+    "broken bones", "good for you", "make you sick", "immune system", "disease", "health",
+    "nutrition", "vitamin", "sick", "probiotic", "water", "hydration", "hydrated", "fluid",
+    "eight glasses", "daily intake", "vegetables", "fruits", "exercise", "dehydration", "thirst",
+    "cancer", "radiation", "x-ray", "xray", "microwave", "coffee", "breakfast", "growth",
+    "anxiety", "sleep", "electromagnetic", "ionizing", "non-ionizing", "health myth", "myth",
+    "risk", "benefit", "danger", "علاج", "دواء", "أعراض", "عدوى", "تشخيص", "طبيب", "سعال",
+    "حمى", "ألم", "شفاء", "جرح", "حساسية", "حمل", "سكري", "غلوكوز", "أنسولين", "ميتفورمين",
+    "كحول", "مناعة", "فيروس", "حليب", "عظام", "نبيذ", "مريض", "صحة", "تغذية", "ماء",
+    "ترطيب", "سائل", "ثمانية أكواب", "نباتات", "فاكهة", "تمارين", "جفاف", "سرطان",
+    "إشعاع", "قهوة", "فطور", "أرق", "قلق", "ثوم", "ليمون", "صيام"
 ]
 
+ARABIC_RANGE = re.compile(r"[\u0600-\u06FF]")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
+
+ARABIC_MEDICAL_GLOSSARY = {
+    "الثوم": "garlic", "ثوم": "garlic", "الليمون": "lemon", "ليمون": "lemon",
+    "العسل": "honey", "عسل": "honey", "الصيام": "fasting", "صيام": "fasting",
+    "المعدة": "stomach", "معدة": "stomach", "القولون": "colon irritable bowel",
+    "قولون": "colon irritable bowel", "السكري": "diabetes mellitus", "سكري": "diabetes mellitus",
+    "السكر": "blood glucose diabetes", "أنسولين": "insulin", "الأنسولين": "insulin",
+    "الضغط": "blood pressure hypertension", "ضغط": "blood pressure hypertension",
+    "السرطان": "cancer", "سرطان": "cancer", "المناعة": "immune system", "مناعة": "immune system",
+    "جرح": "wound", "الجروح": "wounds", "التهاب": "inflammation", "حرق": "burn", "حروق": "burns",
+    "مضاد حيوي": "antibiotic", "المضاد الحيوي": "antibiotic", "دواء": "medication",
+    "علاج": "treatment", "يعالج": "treats", "يشفي": "cures", "يمنع": "prevents",
+    "يسبب": "causes", "مفيد": "benefit", "مضر": "harm risk", "خطر": "risk",
+    "فيروس": "virus", "عدوى": "infection", "بكتيريا": "bacteria", "فيتامين": "vitamin",
+    "مياه": "water hydration", "ماء": "water hydration", "قهوة": "coffee", "النوم": "sleep",
+    "نوم": "sleep", "قلق": "anxiety"
+}
+
+
+def _contains_medical_context(text: str) -> bool:
+    lower = str(text or "").lower()
+    return any(keyword.lower() in lower for keyword in MEDICAL_KEYWORDS)
+
+
+def _strip_non_important_symbols(text: str) -> str:
+    cleaned = str(text or "")
+    for symbol in ("**", "__", "*", "_", "`", "•", "–", "—", "[", "]", "(", ")", "{", "}", "<", ">", "#"):
+        cleaned = cleaned.replace(symbol, " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;!?/\\|\t\n")
+    return cleaned
 
 
 def _get_groq_client():
-    if load_dotenv is not None:
-        load_dotenv()
-
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key or Groq is None:
         return None
     return Groq(api_key=api_key)
 
 
 def _extract_claims_with_groq(text: str):
+    """Member 1 LLM extractor. Returns None so the local/Gemini path can take over on failure."""
     client = _get_groq_client()
     if client is None:
         return None
@@ -78,6 +109,7 @@ Rules:
         content = response.choices[0].message.content or "{}"
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
         content = re.sub(r"```(?:json)?", "", content, flags=re.IGNORECASE).replace("```", "").strip()
+
         decoder = json.JSONDecoder()
         payloads = []
         for match in re.finditer(r"\{", content):
@@ -93,13 +125,9 @@ Rules:
     except Exception:
         return None
 
-    raw_claims = payload.get("claims", []) if isinstance(payload, dict) else []
-    if not isinstance(raw_claims, list):
-        return None
-
     claims = []
     seen = set()
-    for item in raw_claims:
+    for item in payload.get("claims", []):
         if not isinstance(item, dict):
             continue
         original = re.sub(r"\s+", " ", str(item.get("original_claim", "")).strip())
@@ -111,48 +139,16 @@ Rules:
         if key in seen:
             continue
         seen.add(key)
-        claims.append(
-            {
-                "original_claim": original.rstrip(". "),
-                "normalized_claim": normalized.rstrip(". "),
-                "medical_query": query.rstrip(". "),
-            }
-        )
+        claims.append({
+            "original_claim": original.rstrip(". "),
+            "normalized_claim": normalized.rstrip(". "),
+            "medical_query": query.rstrip(". "),
+        })
     return claims
-
-
-def _contains_medical_context(text: str) -> bool:
-    if text is None:
-        return False
-    lower = str(text).lower()
-    return any(keyword.lower() in lower for keyword in MEDICAL_KEYWORDS)
-
-
-def _strip_non_important_symbols(text: str) -> str:
-    if text is None:
-        return ""
-
-    cleaned = str(text)
-    cleaned = cleaned.replace("**", " ").replace("__", " ")
-    cleaned = cleaned.replace("*", " ").replace("_", " ")
-    cleaned = cleaned.replace("`", " ")
-    cleaned = cleaned.replace("•", " ")
-    cleaned = cleaned.replace("–", " ").replace("—", " ")
-    cleaned = cleaned.replace("[", " ").replace("]", " ")
-    cleaned = cleaned.replace("(", " ").replace(")", " ")
-    cleaned = cleaned.replace("{", " ").replace("}", " ")
-    cleaned = cleaned.replace("<", " ").replace(">", " ")
-    cleaned = cleaned.replace("#", " ")
-    cleaned = re.sub(r"\s+", " ", cleaned)
-    cleaned = cleaned.strip(" .,:;!?/\\|\t\n")
-    cleaned = re.sub(r"\s+-\s+", " ", cleaned)
-    cleaned = re.sub(r"(?<=\w)- (?=\w)", " ", cleaned)
-    return cleaned
 
 
 def _split_sentences(text: str):
     text = _strip_non_important_symbols(text)
-    text = re.sub(r"\s+", " ", text.strip())
     return [part.strip() for part in re.split(r"(?<=[.!?])\s+|(?<=[،])\s*", text) if part.strip()]
 
 
@@ -160,71 +156,75 @@ def _split_atomic_clauses(sentence: str):
     text = _strip_non_important_symbols(sentence)
     if not text:
         return []
-
-    chunks = [text]
-    if re.search(r"[\u0600-\u06FF]", text):
+    if ARABIC_RANGE.search(text):
         chunks = re.split(r"\s+(?:و|لكن|حيث|كما|ولا)\s+", text)
     else:
-        chunks = re.split(
-            r"(?<=[.!?])\s+|(?<=[,;])\s+|\s+(?:and|or|but|which|where|while|however|therefore|thus|since|because|although)\s+",
-            text,
-            flags=re.IGNORECASE,
-        )
+        chunks = re.split(r"(?<=[.!?])\s+|(?<=[,;])\s+|\s+(?:and|or|but|which|where|while|however|therefore|thus|since|because|although)\s+", text, flags=re.IGNORECASE)
+    return [chunk.strip().rstrip(". ") for chunk in chunks if len(chunk.strip().split()) >= 3 and _contains_medical_context(chunk)]
 
-    fragments = []
-    for chunk in chunks:
-        chunk = re.sub(r"^[\s,;:]+|[\s,;:]+$", "", str(chunk))
-        if not chunk:
-            continue
 
-        cleaned = re.sub(r"\s+", " ", chunk).strip()
-        if len(cleaned.split()) < 3:
-            continue
+def _required_glossary_terms(arabic_claim: str):
+    required = []
+    for ar, en in sorted(ARABIC_MEDICAL_GLOSSARY.items(), key=lambda pair: len(pair[0]), reverse=True):
+        if ar in arabic_claim:
+            head = en.split()[0].lower()
+            if head not in required:
+                required.append(head)
+    return required
 
-        lower = cleaned.lower()
-        if any(pattern in lower for pattern in [
-            "let your body guide you",
-            "i just wanted to clarify",
-            "it can't be the same",
-            "well, big, small",
-            "whatnot",
-            "so the point is",
-            "you guessed it",
-            "this tagline was invented",
-        ]):
-            continue
 
-        if _contains_medical_context(cleaned):
-            fragments.append(cleaned.rstrip(". "))
-    return fragments
+def _llm_biomedical_query(claim: str):
+    is_arabic = bool(ARABIC_RANGE.search(claim))
+    required_terms = _required_glossary_terms(claim) if is_arabic else []
+    glossary_hint = ", ".join(required_terms) if required_terms else "none"
+
+    query = chat_text(
+        "Convert the medical claim into a concise English PubMed search query. Use key biomedical concepts and useful MeSH-style Boolean terms when helpful. Preserve intervention, condition, claimed effect, population, dose and duration when present. Output ONLY the query, with no explanation. If the claim is Arabic, translate medical concepts accurately. Never translate ثوم as thymus; ثوم means garlic.",
+        f"Claim: {claim}\nRequired biomedical terms from glossary: {glossary_hint}",
+        purpose="query",
+    )
+    if not query:
+        return None
+
+    query = query.strip().strip('"')
+    if not query or ARABIC_RANGE.search(query):
+        return None
+
+    if "garlic" in required_terms:
+        query = re.sub(r"\bthymus\b", "garlic", query, flags=re.IGNORECASE)
+
+    lower_query = query.lower()
+    missing = [term for term in required_terms if term not in lower_query]
+    if missing:
+        query = f"{query} {' '.join(missing)}"
+
+    return re.sub(r"\s+", " ", query)
+
+
+def _fallback_arabic_query(arabic_claim: str) -> str:
+    matched = []
+    for ar, en in sorted(ARABIC_MEDICAL_GLOSSARY.items(), key=lambda pair: len(pair[0]), reverse=True):
+        if ar in arabic_claim and en not in matched:
+            matched.append(en)
+    return " ".join(matched + ["clinical evidence safety"]) if matched else "medical claim clinical evidence safety"
 
 
 def generate_medical_query(claim: str) -> str:
-    """Create a biomedical search query from a raw claim.
-
-    The query stays in English for the downstream RAG layer, while the claim itself
-    can remain Arabic or English.
-    """
-    if claim is None:
-        return "clinical evidence for medical claim"
-
-    cleaned = re.sub(r"\s+", " ", str(claim).strip())
-    cleaned = cleaned.rstrip(". ")
-
+    cleaned = re.sub(r"\s+", " ", str(claim or "").strip()).rstrip(". ")
     if not cleaned:
         return "clinical evidence for medical claim"
 
-    if re.search(r"[\u0600-\u06FF]", cleaned):
-        return f"Clinical evidence and safety of {cleaned}"
+    llm_query = _llm_biomedical_query(cleaned)
+    if llm_query:
+        return llm_query
 
-    query = cleaned
-    if not any(keyword.lower() in query.lower() for keyword in ["evidence", "clinical", "treatment", "symptom", "infection", "diagnosis", "metformin", "diabetes", "insulin", "hypoglycemia"]):
-        query = f"clinical evidence for {query}"
-    return query
+    if ARABIC_RANGE.search(cleaned):
+        return _fallback_arabic_query(cleaned)
+
+    return f"clinical evidence {cleaned}"
 
 
 def extract_claims(text: str):
-    """Extract claims with Groq, falling back to the local extractor when unavailable."""
     if text is None:
         return []
 
@@ -232,61 +232,32 @@ def extract_claims(text: str):
     if not cleaned_text:
         return []
 
-    llm_claims = _extract_claims_with_groq(cleaned_text)
-    if llm_claims is not None:
-        return llm_claims
+    groq_claims = _extract_claims_with_groq(cleaned_text)
+    if groq_claims is not None:
+        return groq_claims
 
-    sentences = _split_sentences(cleaned_text)
-    claims = []
-    seen = set()
-
-    for sentence in sentences:
+    claims, seen = [], set()
+    for sentence in _split_sentences(cleaned_text):
         if not _contains_medical_context(sentence):
             continue
-
-        candidate_clauses = _split_atomic_clauses(sentence)
-        if not candidate_clauses:
-            candidate_clauses = [sentence]
-
-        for clause in candidate_clauses:
+        for clause in (_split_atomic_clauses(sentence) or [sentence]):
             clause_text = re.sub(r"\s+", " ", str(clause).strip())
-            if not clause_text:
+            lower = clause_text.lower()
+            if len(clause_text.split()) < 3 or lower in seen:
                 continue
-            if len(clause_text.split()) < 3:
-                continue
-
-            lower_clause = clause_text.lower()
-            if any(pattern in lower_clause for pattern in [
-                "let your body guide you",
-                "i just wanted to clarify",
-                "it can't be the same",
-                "well, big, small",
-                "whatnot",
-                "so the point is",
-                "you guessed it",
-                "this tagline was invented",
-            ]):
-                continue
-            if lower_clause in seen:
-                continue
-            seen.add(lower_clause)
-            claims.append(
-                {
-                    "original_claim": clause_text,
-                    "normalized_claim": clause_text,
-                    "medical_query": generate_medical_query(clause_text),
-                }
-            )
+            seen.add(lower)
+            claims.append({
+                "original_claim": clause_text,
+                "normalized_claim": clause_text,
+                "medical_query": generate_medical_query(clause_text),
+            })
 
     if not claims and cleaned_text and _contains_medical_context(cleaned_text):
         fallback = re.sub(r"\s+", " ", cleaned_text)
         if len(fallback.split()) >= 4:
-            claims.append(
-                {
-                    "original_claim": fallback,
-                    "normalized_claim": fallback,
-                    "medical_query": generate_medical_query(fallback),
-                }
-            )
-
+            claims.append({
+                "original_claim": fallback,
+                "normalized_claim": fallback,
+                "medical_query": generate_medical_query(fallback),
+            })
     return claims

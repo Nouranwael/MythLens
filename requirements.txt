@@ -1,6 +1,26 @@
+# Member 1 — ingestion / transcription
 yt-dlp
 faster-whisper
 pydub
 imageio-ffmpeg
 groq
+
+# Member 2 — medical RAG
+faiss-cpu
+sentence-transformers
+rank-bm25
+numpy
+requests
+torch
+
+# Member 3 — verification / evaluation
+google-genai
+scikit-learn
+
+# Web API / frontend serving
+fastapi
+uvicorn
+python-multipart
+
+# Configuration
 python-dotenv

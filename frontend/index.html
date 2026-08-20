@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MythLens — Medical Myth Fact Checker</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero">
+      <div class="brand-row">
+        <div class="logo-mark">M</div>
+        <div>
+          <div class="eyebrow">AI Medical Fact Checker</div>
+          <h1>MythLens</h1>
+        </div>
+      </div>
+      <p class="hero-copy">حلّل الادعاءات الطبية باللهجة المصرية، وابحث عن الأدلة العلمية من PubMed، واعرض الحكم والمخاطر والمصادر بشكل واضح.</p>
+      <div class="trust-strip">
+        <span>Gemini</span><span>PubMed</span><span>Hybrid RAG</span><span>Clinical Safety</span>
+      </div>
+    </section>
+
+    <section class="workspace card">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-mode="text">نص</button>
+        <button class="tab" data-mode="url">رابط فيديو</button>
+        <button class="tab" data-mode="video">رفع فيديو</button>
+      </div>
+
+      <div id="panel-text" class="panel active">
+        <label for="claimText">اكتب الادعاء الطبي</label>
+        <textarea id="claimText" rows="6" placeholder="مثال: الثوم بيعالج التهاب الجروح وممكن نستخدمه بدل المضاد الحيوي"></textarea>
+      </div>
+
+      <div id="panel-url" class="panel">
+        <label for="videoUrl">رابط الفيديو</label>
+        <input id="videoUrl" type="url" placeholder="https://..." />
+        <p class="helper">MythLens هيحلل محتوى الفيديو ويستخرج الادعاءات الطبية الموجودة فيه.</p>
+      </div>
+
+      <div id="panel-video" class="panel">
+        <label for="videoFile">اختار فيديو أو ملف صوت</label>
+        <input id="videoFile" type="file" accept="video/*,audio/*" />
+        <p class="helper">الملفات المدعومة تشمل MP4, MOV, MKV, WEBM, MP3, WAV, M4A.</p>
+      </div>
+
+      <div class="action-row">
+        <button id="analyzeBtn" class="primary-btn">حلّل الادعاء</button>
+        <span id="statusText" class="status-text"></span>
+      </div>
+    </section>
+
+    <section id="loadingCard" class="card loading-card hidden">
+      <div class="spinner"></div>
+      <div>
+        <strong>جاري تحليل المحتوى...</strong>
+        <p>قد يستغرق الأمر لحظات.</p>
+      </div>
+    </section>
+
+    <section id="errorCard" class="card error-card hidden"></section>
+
+    <section id="resultSection" class="results hidden">
+      <div class="section-heading">
+        <div>
+          <div class="eyebrow">Fact-check result</div>
+          <h2>نتيجة التحليل</h2>
+        </div>
+        <span id="languageBadge" class="badge neutral"></span>
+      </div>
+
+      <div id="summaryCard" class="card summary-card hidden">
+        <h3>ملخص المحتوى</h3>
+        <p id="summaryText"></p>
+      </div>
+
+      <div id="claimsContainer"></div>
+    </section>
+
+    <footer>MythLens أداة مساعدة للتحقق من المعلومات وليست بديلًا عن التشخيص أو الاستشارة الطبية.</footer>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

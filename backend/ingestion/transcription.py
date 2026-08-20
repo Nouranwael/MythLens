@@ -24,18 +24,12 @@ def _looks_like_local_media_path(value: str) -> bool:
 
 
 def _find_ffmpeg_binary() -> str:
-    candidates = [
-        os.environ.get("FFMPEG_PATH"),
-        "ffmpeg",
-    ]
+    candidates = [os.environ.get("FFMPEG_PATH"), "ffmpeg"]
     for candidate in candidates:
-        if not candidate:
-            continue
-        if shutil.which(candidate):
+        if candidate and shutil.which(candidate):
             return candidate
     try:
         from imageio_ffmpeg import get_ffmpeg_exe
-
         ffmpeg_path = get_ffmpeg_exe()
         if ffmpeg_path and os.path.exists(ffmpeg_path):
             return ffmpeg_path
@@ -45,6 +39,7 @@ def _find_ffmpeg_binary() -> str:
 
 
 def _download_video_from_url(url: str, output_dir: str) -> str:
+    """Download the best audio stream only and make ffmpeg discoverable to yt-dlp."""
     ffmpeg_path = _find_ffmpeg_binary()
     ffmpeg_dir = os.path.dirname(ffmpeg_path)
     os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
@@ -58,7 +53,6 @@ def _download_video_from_url(url: str, output_dir: str) -> str:
         "restrictfilenames": False,
         "ffmpeg_location": ffmpeg_dir,
     }
-
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.extract_info(url, download=True)
 
@@ -71,20 +65,9 @@ def _download_video_from_url(url: str, output_dir: str) -> str:
 def _extract_audio_from_video(video_path: str, output_dir: str) -> str:
     ffmpeg_path = _find_ffmpeg_binary()
     output_audio = os.path.join(output_dir, "audio.wav")
-
     command = [
-        ffmpeg_path,
-        "-y",
-        "-i",
-        str(video_path),
-        "-vn",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        str(output_audio),
+        ffmpeg_path, "-y", "-i", str(video_path), "-vn",
+        "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", str(output_audio),
     ]
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return output_audio
@@ -110,8 +93,8 @@ def transcribe_video(video_input: Any) -> str:
         text = str(video_input).strip()
         if _looks_like_url(text):
             with tempfile.TemporaryDirectory(prefix="mythlens_video_") as tmp_dir:
-                video_path = _download_video_from_url(text, tmp_dir)
-                audio_path = _extract_audio_from_video(video_path, tmp_dir)
+                media_path = _download_video_from_url(text, tmp_dir)
+                audio_path = _extract_audio_from_video(media_path, tmp_dir)
                 return _transcribe_audio(audio_path)
 
         if _looks_like_local_media_path(text):
@@ -133,7 +116,6 @@ def transcribe_video(video_input: Any) -> str:
 
 
 def summarize_video_transcript(transcript: str, language: str | None = None) -> str:
-    """Generate a concise summary of the most important details in the video transcript."""
     if transcript is None:
         return ""
     text = str(transcript).strip()
@@ -145,14 +127,11 @@ def summarize_video_transcript(transcript: str, language: str | None = None) -> 
 
 
 def process_text_input(text: str) -> dict:
-    """Process raw transcript text or real media URLs and return the Member 1 payload."""
     if text is None:
         text = ""
 
     text = str(text).strip()
-    if _looks_like_url(text):
-        transcript = transcribe_video(text)
-    elif _looks_like_local_media_path(text):
+    if _looks_like_url(text) or _looks_like_local_media_path(text):
         transcript = transcribe_video(text)
     else:
         transcript = text
@@ -171,6 +150,5 @@ def process_text_input(text: str) -> dict:
 
 
 def process_video_input(video_input: Any) -> dict:
-    """Transcribe any supported input and then process it as text."""
     transcript = transcribe_video(video_input)
     return process_text_input(transcript)

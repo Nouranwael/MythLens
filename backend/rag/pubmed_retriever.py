@@ -1,0 +1,204 @@
+"""Live PubMed retrieval through NCBI E-utilities."""
+from __future__ import annotations
+
+import re
+import time
+import xml.etree.ElementTree as ET
+
+import requests
+
+from .config import NCBI_API_KEY, NCBI_EMAIL, PUBMED_BASE
+
+SESSION = requests.Session()
+REQUEST_DELAY = 0.12 if NCBI_API_KEY else 0.40
+MAX_RETRIES = 3
+
+
+def _params(**kwargs):
+    params = dict(kwargs)
+    if NCBI_EMAIL:
+        params["email"] = NCBI_EMAIL
+    if NCBI_API_KEY:
+        params["api_key"] = NCBI_API_KEY
+    params["tool"] = "MythLens"
+    return params
+
+
+def safe_get(url, params):
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            time.sleep(REQUEST_DELAY)
+            response = SESSION.get(url, params=params, timeout=30)
+            if response.status_code == 429:
+                time.sleep(2 ** (attempt + 1))
+                continue
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(2 ** (attempt + 1))
+    raise last_error or RuntimeError("PubMed request failed")
+
+
+def build_pubmed_query(medical_query):
+    query = re.sub(r"[?!.]", " ", str(medical_query).lower()).strip()
+    stop = {"can", "does", "do", "is", "are", "help", "could", "would", "may"}
+    query = " ".join(w for w in query.split() if w not in stop)
+    replacements = {
+        "high blood pressure": "high blood pressure hypertension",
+        "heart attack": "heart attack myocardial infarction",
+        "high cholesterol": "high cholesterol hypercholesterolemia",
+    }
+    for old, new in replacements.items():
+        if old in query:
+            query = query.replace(old, new)
+    if "diabetes" in query and "diabetes mellitus" not in query:
+        query = query.replace("diabetes", "diabetes mellitus")
+    words = []
+    for word in query.split():
+        if not words or word != words[-1]:
+            words.append(word)
+    return " ".join(words)
+
+
+def simplify_medical_query(query):
+    query = re.sub(r"[^\w\s-]", " ", str(query).lower())
+    filler = {
+        "new", "study", "studies", "review", "reviews", "report", "reports", "reported",
+        "find", "finds", "found", "says", "say", "shows", "show", "experts", "issue",
+        "issued", "gets", "get", "may", "lukewarm", "promising", "breakthrough", "major", "big", "deal",
+        "mesh", "sh", "and", "or", "not",
+    }
+    return " ".join(w for w in query.split() if w not in filler)
+
+
+def _clean_pubmed_term(value):
+    value = re.sub(r"\[[^\]]+\]", " ", str(value))
+    value = re.sub(r"[\"'()]", " ", value)
+    value = re.sub(r"\b(?:AND|OR|NOT)\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value).strip(" -")
+    return value
+
+
+def build_relaxed_queries(query):
+    """Create progressively broader fallbacks for over-specific MeSH/Boolean queries."""
+    raw = str(query or "").strip()
+    if not raw:
+        return []
+
+    groups = re.split(r"\s+AND\s+", raw, flags=re.IGNORECASE)
+    concepts = []
+    for group in groups:
+        alternatives = re.split(r"\s+OR\s+", group, flags=re.IGNORECASE)
+        first = _clean_pubmed_term(alternatives[0] if alternatives else group)
+        first = simplify_medical_query(first)
+        if first and first not in concepts:
+            concepts.append(first)
+
+    relaxed = []
+    # The first two concepts usually capture intervention + condition and give
+    # PubMed a useful broad fallback when a full fact-check query is too strict.
+    for size in (2, 3, len(concepts)):
+        if len(concepts) >= size and size > 0:
+            candidate = " ".join(concepts[:size]).strip()
+            if candidate and candidate not in relaxed:
+                relaxed.append(candidate)
+
+    fully_cleaned = simplify_medical_query(_clean_pubmed_term(raw))
+    if fully_cleaned and fully_cleaned not in relaxed:
+        relaxed.append(fully_cleaned)
+    return relaxed
+
+
+def search_pubmed(query, retmax=20):
+    response = safe_get(
+        f"{PUBMED_BASE}/esearch.fcgi",
+        _params(db="pubmed", term=query, retmode="json", retmax=retmax, sort="relevance"),
+    )
+    return response.json().get("esearchresult", {}).get("idlist", [])
+
+
+def search_pubmed_multi_query(medical_query, retmax_per_query=20):
+    queries = [
+        medical_query,
+        build_pubmed_query(medical_query),
+        simplify_medical_query(medical_query),
+        *build_relaxed_queries(medical_query),
+    ]
+    unique_queries = []
+    for query in queries:
+        query = str(query).strip()
+        if query and query not in unique_queries:
+            unique_queries.append(query)
+
+    all_pmids = []
+    for query in unique_queries:
+        try:
+            for pmid in search_pubmed(query, retmax=retmax_per_query):
+                if pmid not in all_pmids:
+                    all_pmids.append(pmid)
+            # Once we have a healthy candidate pool, avoid unnecessary PubMed calls.
+            if len(all_pmids) >= retmax_per_query:
+                break
+        except Exception:
+            continue
+    return all_pmids
+
+
+def _text(element):
+    if element is None:
+        return ""
+    return "".join(element.itertext()).strip()
+
+
+def fetch_pubmed_articles(pmids):
+    if not pmids:
+        return []
+    response = safe_get(
+        f"{PUBMED_BASE}/efetch.fcgi",
+        _params(db="pubmed", id=",".join(pmids), retmode="xml"),
+    )
+    root = ET.fromstring(response.content)
+    articles = []
+    for record in root.findall(".//PubmedArticle"):
+        pmid = _text(record.find(".//PMID"))
+        title = _text(record.find(".//ArticleTitle"))
+        abstract_parts = [_text(el) for el in record.findall(".//Abstract/AbstractText")]
+        abstract = " ".join(part for part in abstract_parts if part).strip()
+        publication_types = [_text(el) for el in record.findall(".//PublicationType") if _text(el)]
+        articles.append({
+            "id": f"pubmed-{pmid}",
+            "pmid": pmid,
+            "title": title,
+            "text": abstract,
+            "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "",
+            "publication_types": publication_types,
+        })
+    return articles
+
+
+def remove_retracted_articles(articles):
+    return [
+        article for article in articles
+        if "retracted publication" not in " ".join(article.get("publication_types", [])).lower()
+    ]
+
+
+def get_best_study_type(publication_types):
+    text = " ".join(publication_types or []).lower()
+    order = [
+        ("meta-analysis", "Meta-Analysis"),
+        ("systematic review", "Systematic Review"),
+        ("randomized controlled trial", "Randomized Controlled Trial"),
+        ("clinical trial", "Clinical Trial"),
+        ("observational study", "Observational Study"),
+        ("case reports", "Case Report"),
+        ("review", "Review"),
+        ("journal article", "Journal Article"),
+    ]
+    for token, label in order:
+        if token in text:
+            return label
+    return publication_types[0] if publication_types else "Unknown"
