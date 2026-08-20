@@ -80,10 +80,16 @@ def prepare_review(query_file: Path, output_dir: Path, pool_k: int) -> Path:
         result = retrieve_evidence(query, top_k=pool_k)
         evidence = result.get("evidence", [])
         candidates = []
-        for rank, item in enumerate(evidence, start=1):
+        seen_ids: set[str] = set()
+        for item in evidence:
+            candidate_id = evidence_id(item, len(candidates) + 1)
+            if candidate_id in seen_ids:
+                continue
+            seen_ids.add(candidate_id)
+            rank = len(candidates) + 1
             candidates.append({
                 "rank": rank,
-                "id": evidence_id(item, rank),
+                "id": candidate_id,
                 "source": item.get("source", ""),
                 "title": item.get("title", ""),
                 "pmid": item.get("pmid", ""),
@@ -114,6 +120,19 @@ def prepare_review(query_file: Path, output_dir: Path, pool_k: int) -> Path:
     return review_path
 
 
+def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the highest-ranked occurrence of each evidence ID."""
+    deduped = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_id = str(candidate.get("id", ""))
+        if not candidate_id or candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        deduped.append(candidate)
+    return deduped
+
+
 def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
     payload = json.loads(review_path.read_text(encoding="utf-8"))
     query_items = payload.get("queries", [])
@@ -122,7 +141,7 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
     unreviewed = []
 
     for query_item in query_items:
-        candidates = query_item.get("candidates", [])
+        candidates = _dedupe_candidates(query_item.get("candidates", []))
         missing = [candidate.get("rank") for candidate in candidates if candidate.get("relevance") is None]
         if missing:
             unreviewed.append({"id": query_item.get("id"), "missing_ranks": missing})
@@ -134,24 +153,21 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
             for candidate in candidates
         }
         judged_relevant_total = sum(1 for value in relevance_by_id.values() if value > 0)
-        one = evaluate_graded_retrieval([
-            {
-                "retrieved_ids": retrieved_ids,
-                "relevance_by_id": relevance_by_id,
-                "judged_relevant_total": judged_relevant_total,
-            }
-        ], top_k=top_k)
+        metric_item = {
+            "retrieved_ids": retrieved_ids,
+            "relevance_by_id": relevance_by_id,
+            "judged_relevant_total": judged_relevant_total,
+            "answerable": True,
+        }
+        one = evaluate_graded_retrieval([metric_item], top_k=top_k)
         per_query.append({
             "id": query_item.get("id"),
             "query": query_item.get("query"),
             "metrics": one,
+            "retrieved_unique": len(retrieved_ids),
             "relevant_in_judged_pool": judged_relevant_total,
         })
-        metric_items.append({
-            "retrieved_ids": retrieved_ids,
-            "relevance_by_id": relevance_by_id,
-            "judged_relevant_total": judged_relevant_total,
-        })
+        metric_items.append(metric_item)
 
     if unreviewed:
         raise ValueError(
@@ -166,11 +182,13 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
         "evaluation_type": "manual graded relevance over Hybrid RAG candidate pool",
         "relevance_scale": {"0": "irrelevant", "1": "partial", "2": "direct"},
         "top_k": top_k,
-        "judged_pool": "Top candidates stored in review.json for each query",
+        "judged_pool": "Unique top candidates stored in review.json for each query",
         "aggregate": aggregate,
         "per_query": per_query,
         "limitations": [
             "Recall is Recall@K over the manually judged candidate pool, not the entire PubMed/local corpus.",
+            "Queries with no retrieved evidence are counted as zero-quality retrievals and reduce retrieval coverage.",
+            "Duplicate chunks with the same evidence ID are deduplicated before scoring.",
             "Human relevance labels should be assigned before inspecting aggregate scores.",
             "This evaluates retrieval relevance; final verdict correctness requires a separate labeled claim-verdict set.",
         ],
