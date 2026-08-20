@@ -62,18 +62,14 @@ def _dcg(relevances: List[int], top_k: int) -> float:
 def evaluate_graded_retrieval(retrieval_results: List[Dict[str, Any]], top_k: int = 5) -> Dict[str, Any]:
     """Evaluate manually judged Hybrid RAG results.
 
-    Expected item format::
-
-        {
-          "retrieved_ids": ["doc-a", "doc-b", ...],
-          "relevance_by_id": {"doc-a": 2, "doc-b": 0, ...},
-          "judged_relevant_total": 4
-        }
-
     Relevance grades:
       0 = irrelevant
       1 = partially/supportively relevant
       2 = directly relevant to the medical query
+
+    Empty retrievals are counted as zero-quality results when ``answerable`` is
+    true (the default), rather than silently skipped. This prevents retrieval
+    failures from inflating aggregate metrics.
 
     Recall is calculated against the complete *judged candidate pool* supplied for
     each query, not against the entire corpus. This limitation is reported in the
@@ -87,17 +83,32 @@ def evaluate_graded_retrieval(retrieval_results: List[Dict[str, Any]], top_k: in
     reciprocal_ranks: List[float] = []
     ndcgs: List[float] = []
     skipped = 0
+    no_result_queries = 0
+    queries_with_results = 0
 
     for item in retrieval_results:
-        retrieved = [str(value) for value in item.get("retrieved_ids", [])]
+        retrieved = [str(value) for value in item.get("retrieved_ids", []) if str(value)]
         relevance_by_id = {
             str(key): int(value)
             for key, value in item.get("relevance_by_id", {}).items()
             if value is not None
         }
         judged_total = int(item.get("judged_relevant_total", 0) or 0)
+        answerable = bool(item.get("answerable", True))
 
-        if not retrieved or not relevance_by_id:
+        if not retrieved:
+            if answerable:
+                no_result_queries += 1
+                precisions.append(0.0)
+                recalls.append(0.0)
+                reciprocal_ranks.append(0.0)
+                ndcgs.append(0.0)
+            else:
+                skipped += 1
+            continue
+
+        queries_with_results += 1
+        if not relevance_by_id:
             skipped += 1
             continue
 
@@ -114,12 +125,19 @@ def evaluate_graded_retrieval(retrieval_results: List[Dict[str, Any]], top_k: in
         idcg = _dcg(ideal_grades, top_k)
         ndcgs.append((dcg / idcg) if idcg > 0 else 0.0)
 
+    evaluated = len(precisions)
+    coverage_denominator = queries_with_results + no_result_queries
+    coverage = (queries_with_results / coverage_denominator) if coverage_denominator else 0.0
+
     return {
         f"precision@{top_k}": round(float(np.mean(precisions)) if precisions else 0.0, 4),
         f"recall@{top_k}": round(float(np.mean(recalls)) if recalls else 0.0, 4),
         "mrr": round(float(np.mean(reciprocal_ranks)) if reciprocal_ranks else 0.0, 4),
         f"ndcg@{top_k}": round(float(np.mean(ndcgs)) if ndcgs else 0.0, 4),
-        "evaluated_queries": len(precisions),
+        "retrieval_coverage": round(float(coverage), 4),
+        "evaluated_queries": evaluated,
+        "queries_with_results": queries_with_results,
+        "no_result_queries": no_result_queries,
         "skipped_queries": skipped,
         "recall_scope": "judged candidate pool",
     }
