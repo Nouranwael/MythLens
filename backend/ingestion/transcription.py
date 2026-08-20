@@ -12,7 +12,7 @@ from faster_whisper import WhisperModel
 import yt_dlp
 
 from backend.arabic.normalization import detect_language, normalize_egyptian_arabic, summarize_key_points
-from backend.claims.extraction import extract_claims
+from backend.claims.extraction import extract_claims, summarize_with_groq
 
 
 def _looks_like_url(value: str) -> bool:
@@ -115,7 +115,7 @@ def transcribe_video(video_input: Any) -> str:
     return str(video_input)
 
 
-def summarize_video_transcript(transcript: str, language: str | None = None) -> str:
+def summarize_video_transcript(transcript: str, language: str | None = None, claims: list[dict] | None = None) -> str:
     if transcript is None:
         return ""
     text = str(transcript).strip()
@@ -123,7 +123,7 @@ def summarize_video_transcript(transcript: str, language: str | None = None) -> 
         return ""
     detected = language or detect_language(text)
     normalized = normalize_egyptian_arabic(text) if detected == "ar-EG" else text
-    return summarize_key_points(normalized, language=detected, max_sentences=3)
+    return summarize_with_groq(normalized, language=detected, claims=claims)
 
 
 def process_text_input(text: str) -> dict:
@@ -138,8 +138,8 @@ def process_text_input(text: str) -> dict:
 
     language = detect_language(transcript)
     normalized_text = normalize_egyptian_arabic(transcript) if language == "ar-EG" else transcript
-    summary = summarize_video_transcript(normalized_text, language=language)
     claims = extract_claims(normalized_text)
+    summary = summarize_video_transcript(normalized_text, language=language, claims=claims)
 
     return {
         "original_transcript": transcript,

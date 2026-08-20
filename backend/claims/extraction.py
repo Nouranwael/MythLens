@@ -38,6 +38,14 @@ MEDICAL_KEYWORDS = [
 ARABIC_RANGE = re.compile(r"[\u0600-\u06FF]")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b")
 
+
+class GroqExtractionError(RuntimeError):
+    """Raised when the required Groq claim-extraction step is unavailable."""
+
+
+class GroqSummaryError(RuntimeError):
+    """Raised when the required Groq transcript summary step is unavailable."""
+
 ARABIC_MEDICAL_GLOSSARY = {
     "الثوم": "garlic", "ثوم": "garlic", "الليمون": "lemon", "ليمون": "lemon",
     "العسل": "honey", "عسل": "honey", "الصيام": "fasting", "صيام": "fasting",
@@ -76,11 +84,26 @@ def _get_groq_client():
     return Groq(api_key=api_key)
 
 
+def _parse_groq_claim_payload(content: str):
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r"```(?:json)?", "", content, flags=re.IGNORECASE).replace("```", "").strip()
+    decoder = json.JSONDecoder()
+    payloads = []
+    for match in re.finditer(r"\{", content):
+        try:
+            candidate, _ = decoder.raw_decode(content[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and isinstance(candidate.get("claims"), list):
+            payloads.append(candidate)
+    return max(payloads, key=lambda item: len(item.get("claims", [])), default=None)
+
+
 def _extract_claims_with_groq(text: str):
-    """Member 1 LLM extractor. Returns None so the local/Gemini path can take over on failure."""
+    """Extract claims with Groq; do not silently replace the LLM with heuristics."""
     client = _get_groq_client()
     if client is None:
-        return None
+        raise GroqExtractionError("Set GROQ_API_KEY and GROQ_MODEL in .env.")
 
     system_prompt = """You extract health-related claims from transcripts in Arabic, English, or mixed language.
 Return only one valid JSON object with this shape: {\"claims\": [{\"original_claim\": \"...\", \"normalized_claim\": \"...\", \"medical_query\": \"...\"}]}.
@@ -96,34 +119,31 @@ Rules:
 - If there are no health-related claims, return {\"claims\": []}."""
 
     try:
-        response = client.chat.completions.create(
-            model=os.getenv("GROQ_MODEL", GROQ_MODEL),
-            temperature=0.1,
-            reasoning_format="hidden",
-            max_completion_tokens=4096,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": _strip_non_important_symbols(text)},
-            ],
-        )
-        content = response.choices[0].message.content or "{}"
-        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE)
-        content = re.sub(r"```(?:json)?", "", content, flags=re.IGNORECASE).replace("```", "").strip()
-
-        decoder = json.JSONDecoder()
-        payloads = []
-        for match in re.finditer(r"\{", content):
-            try:
-                candidate, _ = decoder.raw_decode(content[match.start():])
-            except json.JSONDecodeError:
-                continue
-            if isinstance(candidate, dict) and isinstance(candidate.get("claims"), list):
-                payloads.append(candidate)
-        if not payloads:
-            return None
-        payload = max(payloads, key=lambda item: len(item.get("claims", [])))
-    except Exception:
-        return None
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": _strip_non_important_symbols(text)},
+        ]
+        for attempt in range(2):
+            response = client.chat.completions.create(
+                model=os.getenv("GROQ_MODEL", GROQ_MODEL),
+                temperature=0.1,
+                reasoning_format="hidden",
+                max_completion_tokens=4096,
+                messages=messages,
+            )
+            payload = _parse_groq_claim_payload(response.choices[0].message.content or "")
+            if payload is not None:
+                break
+            messages[0] = {
+                "role": "system",
+                "content": "Return only valid JSON: {\"claims\":[{\"original_claim\":\"...\",\"normalized_claim\":\"...\",\"medical_query\":\"...\"}]}. Extract separate Arabic or English health claims from the transcript. No reasoning or markdown.",
+            }
+        else:
+            raise GroqExtractionError("Groq returned no valid claims JSON after retry.")
+    except GroqExtractionError:
+        raise
+    except Exception as exc:
+        raise GroqExtractionError(f"Groq claim extraction failed: {exc}") from exc
 
     claims = []
     seen = set()
@@ -145,6 +165,45 @@ Rules:
             "medical_query": query.rstrip(". "),
         })
     return claims
+
+
+def summarize_with_groq(text: str, language: str = "", claims: list[dict] | None = None) -> str:
+    """Summarize a cleaned transcript in its detected language using Groq."""
+    client = _get_groq_client()
+    if client is None:
+        raise GroqSummaryError("Set GROQ_API_KEY and GROQ_MODEL in .env.")
+
+    output_language = "Egyptian Arabic" if language == "ar-EG" else "English"
+    prompt = (
+        f"Summarize this health video transcript in clear {output_language}. "
+        "Write 2 or 3 natural sentences covering only the main health information. "
+        "Do not add facts, commentary, headings, or a conclusion. Return only the summary."
+    )
+    claim_context = ""
+    if claims:
+        claim_context = "\n\nUse these extracted claims to understand unclear speech, but do not add information:\n" + "\n".join(
+            f"- {claim.get('normalized_claim', '')}" for claim in claims[:10]
+        )
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", GROQ_MODEL),
+            temperature=0.1,
+            reasoning_format="raw",
+            max_completion_tokens=2048,
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": _strip_non_important_symbols(text) + claim_context},
+            ],
+        )
+        summary = re.sub(r"<think>.*?</think>", "", response.choices[0].message.content or "", flags=re.DOTALL | re.IGNORECASE)
+        summary = re.sub(r"\s+", " ", summary).strip(" \"'")
+        if not summary:
+            raise GroqSummaryError("Groq returned an empty summary.")
+        return summary
+    except GroqSummaryError:
+        raise
+    except Exception as exc:
+        raise GroqSummaryError(f"Groq summary generation failed: {exc}") from exc
 
 
 def _split_sentences(text: str):
@@ -232,32 +291,4 @@ def extract_claims(text: str):
     if not cleaned_text:
         return []
 
-    groq_claims = _extract_claims_with_groq(cleaned_text)
-    if groq_claims is not None:
-        return groq_claims
-
-    claims, seen = [], set()
-    for sentence in _split_sentences(cleaned_text):
-        if not _contains_medical_context(sentence):
-            continue
-        for clause in (_split_atomic_clauses(sentence) or [sentence]):
-            clause_text = re.sub(r"\s+", " ", str(clause).strip())
-            lower = clause_text.lower()
-            if len(clause_text.split()) < 3 or lower in seen:
-                continue
-            seen.add(lower)
-            claims.append({
-                "original_claim": clause_text,
-                "normalized_claim": clause_text,
-                "medical_query": generate_medical_query(clause_text),
-            })
-
-    if not claims and cleaned_text and _contains_medical_context(cleaned_text):
-        fallback = re.sub(r"\s+", " ", cleaned_text)
-        if len(fallback.split()) >= 4:
-            claims.append({
-                "original_claim": fallback,
-                "normalized_claim": fallback,
-                "medical_query": generate_medical_query(fallback),
-            })
-    return claims
+    return _extract_claims_with_groq(cleaned_text)

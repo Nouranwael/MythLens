@@ -16,6 +16,7 @@ torch
 # Member 3 — verification / evaluation
 google-genai
 scikit-learn
+matplotlib
 
 # Web API / frontend serving
 fastapi
