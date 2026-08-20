@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.evaluation.metrics import evaluate_graded_retrieval
+from backend.evaluation.metrics import evaluate_graded_retrieval, evaluate_strict_retrieval
 from backend.rag.retriever import retrieve_evidence
 
 DEFAULT_QUERIES = ROOT / "data" / "hybrid_eval_queries.json"
@@ -159,13 +159,16 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
             "judged_relevant_total": judged_relevant_total,
             "answerable": True,
         }
-        one = evaluate_graded_retrieval([metric_item], top_k=top_k)
+        standard_one = evaluate_graded_retrieval([metric_item], top_k=top_k)
+        strict_one = evaluate_strict_retrieval([metric_item], top_k=top_k)
         per_query.append({
             "id": query_item.get("id"),
             "query": query_item.get("query"),
-            "metrics": one,
+            "standard_metrics": standard_one,
+            "strict_metrics": strict_one,
             "retrieved_unique": len(retrieved_ids),
             "relevant_in_judged_pool": judged_relevant_total,
+            "directly_relevant_in_judged_pool": sum(1 for value in relevance_by_id.values() if value == 2),
         })
         metric_items.append(metric_item)
 
@@ -175,7 +178,8 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
             f"Missing: {json.dumps(unreviewed, ensure_ascii=False)}"
         )
 
-    aggregate = evaluate_graded_retrieval(metric_items, top_k=top_k)
+    standard_aggregate = evaluate_graded_retrieval(metric_items, top_k=top_k)
+    strict_aggregate = evaluate_strict_retrieval(metric_items, top_k=top_k)
     output_dir.mkdir(parents=True, exist_ok=True)
     result_path = output_dir / "hybrid_rag_metrics.json"
     result = {
@@ -183,13 +187,16 @@ def score_review(review_path: Path, output_dir: Path, top_k: int) -> Path:
         "relevance_scale": {"0": "irrelevant", "1": "partial", "2": "direct"},
         "top_k": top_k,
         "judged_pool": "Unique top candidates stored in review.json for each query",
-        "aggregate": aggregate,
+        "aggregate": standard_aggregate,
+        "strict_aggregate": strict_aggregate,
         "per_query": per_query,
         "limitations": [
             "Recall is Recall@K over the manually judged candidate pool, not the entire PubMed/local corpus.",
             "Queries with no retrieved evidence are counted as zero-quality retrievals and reduce retrieval coverage.",
             "Duplicate chunks with the same evidence ID are deduplicated before scoring.",
             "Human relevance labels should be assigned before inspecting aggregate scores.",
+            "Standard metrics treat relevance grades 1 and 2 as relevant; strict metrics count only grade 2 as relevant.",
+            "Strict Recall excludes queries whose judged pool contains no grade-2 evidence and reports that denominator explicitly.",
             "This evaluates retrieval relevance; final verdict correctness requires a separate labeled claim-verdict set.",
         ],
     }
@@ -217,7 +224,11 @@ def main() -> int:
 
     path = score_review(args.score, args.output_dir, args.top_k)
     result = json.loads(path.read_text(encoding="utf-8"))
-    print(json.dumps({"result": str(path), "aggregate": result["aggregate"]}, indent=2))
+    print(json.dumps({
+        "result": str(path),
+        "aggregate": result["aggregate"],
+        "strict_aggregate": result["strict_aggregate"],
+    }, indent=2))
     return 0
 
 
