@@ -59,13 +59,41 @@ def _sigmoid(value):
         return 0.0 if float(value) < 0 else 1.0
 
 
-def final_rerank(query, candidates, top_k=5, min_relevance=0.50):
+def _dedupe_candidates(candidates):
+    """Collapse repeated PubMed/local chunks before final ranking."""
+    seen = set()
+    unique = []
+    for index, item in enumerate(candidates, start=1):
+        pmid = str(item.get("pmid") or "").strip()
+        source = str(item.get("source") or item.get("dataset") or "local").strip().casefold()
+        title = " ".join(str(item.get("title") or "").casefold().split())
+        item_id = str(item.get("id") or "").strip()
+        key = ("pmid", pmid) if pmid else (("title", source, title) if title else ("id", item_id or str(index)))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return unique
+
+
+def final_rerank(query, candidates, top_k=5, min_relevance=None):
+    """Rank evidence while avoiding a brittle absolute CrossEncoder cutoff.
+
+    MS-MARCO CrossEncoder logits are ranking scores, not calibrated medical
+    probabilities. The old sigmoid>=0.50 filter could remove every candidate for
+    valid queries. We now use the model primarily for ordering, preserve source
+    quality signals, and only apply a cutoff when one is explicitly configured.
+    """
+    candidates = _dedupe_candidates(candidates)
     if not candidates:
         return []
+
     pairs = [(query, (c.get("title", "") + " " + c.get("text", "")).strip()) for c in candidates]
+    cross_encoder_ok = False
     try:
         raw_scores = _get_cross_encoder().predict(pairs, show_progress_bar=False)
         relevance_scores = [_sigmoid(score) for score in raw_scores]
+        cross_encoder_ok = True
     except Exception:
         relevance_scores = [max(0.0, min(1.0, float(c.get("source_score", c.get("rrf_score", 0.6))))) for c in candidates]
 
@@ -74,11 +102,21 @@ def final_rerank(query, candidates, top_k=5, min_relevance=0.50):
         item = candidate.copy()
         item["rerank_score"] = float(relevance)
         if item.get("source") == "PubMed":
-            final_score = 0.70 * relevance + 0.20 * float(item.get("study_strength", 0.60)) + 0.10 * float(item.get("semantic_score", 0.0))
+            semantic = max(0.0, min(1.0, float(item.get("semantic_score", 0.0))))
+            strength = max(0.0, min(1.0, float(item.get("study_strength", 0.60))))
+            # CrossEncoder dominates ordering, while biomedical semantic match and
+            # study design keep weak-but-related PubMed results from disappearing.
+            final_score = 0.60 * relevance + 0.25 * semantic + 0.15 * strength
         else:
-            final_score = relevance
+            source_signal = max(0.0, min(1.0, float(item.get("source_score", item.get("rrf_score", 0.0)))))
+            final_score = 0.80 * relevance + 0.20 * source_signal
         item["final_score"] = float(final_score)
-        if relevance >= min_relevance:
-            final_results.append(item)
 
+        if min_relevance is not None and relevance < float(min_relevance):
+            continue
+        final_results.append(item)
+
+    # If CrossEncoder is unavailable, source/semantic scores still provide a stable
+    # deterministic ordering. If it is available, its score is used for ranking,
+    # not as an uncalibrated binary gate.
     return sorted(final_results, key=lambda x: x["final_score"], reverse=True)[:top_k]
