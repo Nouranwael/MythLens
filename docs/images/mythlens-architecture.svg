@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="560" viewBox="0 0 1600 560" role="img" aria-labelledby="title desc">
+  <title id="title">MythLens System Architecture</title>
+  <desc id="desc">Input flows through transcription, claim extraction, medical query generation, hybrid RAG retrieval, re-ranking, evidence verification, clinical safety, and a final structured result.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071e23"/>
+      <stop offset="1" stop-color="#0b2e33"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#53dfd3"/>
+      <stop offset="1" stop-color="#74b6ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-opacity="0.22"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#62d7d2"/>
+    </marker>
+    <style>
+      .title{font:700 34px Arial,Helvetica,sans-serif;fill:#f4fbfb}.sub{font:400 17px Arial,Helvetica,sans-serif;fill:#a9c3c5}.box{fill:#0e3338;stroke:#25565c;stroke-width:2}.box2{fill:#102d38;stroke:#37687a;stroke-width:2}.box3{fill:#17323c;stroke:#53687f;stroke-width:2}.label{font:700 19px Arial,Helvetica,sans-serif;fill:#f7fbfb}.small{font:400 14px Arial,Helvetica,sans-serif;fill:#b9ced0}.accent{font:700 14px Arial,Helvetica,sans-serif;fill:#62d7d2}.arrow{stroke:#62d7d2;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="560" rx="34" fill="url(#bg)"/>
+  <text x="70" y="72" class="title">MythLens System Architecture</text>
+  <text x="70" y="106" class="sub">Evidence-grounded medical myth fact checking for text, video URLs, and uploaded media</text>
+
+  <g filter="url(#shadow)">
+    <rect class="box" x="55" y="180" width="180" height="175" rx="22"/>
+    <text x="145" y="218" text-anchor="middle" class="label">User Input</text>
+    <text x="145" y="257" text-anchor="middle" class="small">Text Claim</text>
+    <text x="145" y="286" text-anchor="middle" class="small">Video URL</text>
+    <text x="145" y="315" text-anchor="middle" class="small">Video / Audio Upload</text>
+
+    <rect class="box2" x="285" y="180" width="200" height="175" rx="22"/>
+    <text x="385" y="216" text-anchor="middle" class="label">Ingestion</text>
+    <text x="385" y="246" text-anchor="middle" class="small">Faster-Whisper</text>
+    <text x="385" y="274" text-anchor="middle" class="small">Audio extraction</text>
+    <text x="385" y="302" text-anchor="middle" class="small">Arabic / English transcript</text>
+    <text x="385" y="330" text-anchor="middle" class="accent">Media only</text>
+
+    <rect class="box" x="535" y="180" width="210" height="175" rx="22"/>
+    <text x="640" y="216" text-anchor="middle" class="label">Claim Extraction</text>
+    <text x="640" y="248" text-anchor="middle" class="small">Groq + Qwen</text>
+    <text x="640" y="276" text-anchor="middle" class="small">Atomic health claims</text>
+    <text x="640" y="304" text-anchor="middle" class="small">Arabic / English</text>
+    <text x="640" y="332" text-anchor="middle" class="accent">Transcript summary</text>
+
+    <rect class="box3" x="795" y="180" width="205" height="175" rx="22"/>
+    <text x="897" y="216" text-anchor="middle" class="label">Medical Query</text>
+    <text x="897" y="248" text-anchor="middle" class="small">Gemini query generation</text>
+    <text x="897" y="276" text-anchor="middle" class="small">Biomedical concepts</text>
+    <text x="897" y="304" text-anchor="middle" class="small">PubMed-focused search</text>
+    <text x="897" y="332" text-anchor="middle" class="accent">MeSH-style terms</text>
+
+    <rect class="box" x="1050" y="155" width="245" height="225" rx="22"/>
+    <text x="1172" y="193" text-anchor="middle" class="label">Hybrid RAG</text>
+    <text x="1172" y="227" text-anchor="middle" class="small">FAISS vector retrieval</text>
+    <text x="1172" y="255" text-anchor="middle" class="small">BM25 keyword retrieval</text>
+    <text x="1172" y="283" text-anchor="middle" class="small">Live PubMed fallback</text>
+    <text x="1172" y="311" text-anchor="middle" class="small">Cross-encoder re-ranking</text>
+    <text x="1172" y="345" text-anchor="middle" class="accent">Top evidence</text>
+
+    <rect class="box2" x="1345" y="155" width="205" height="105" rx="22"/>
+    <text x="1447" y="196" text-anchor="middle" class="label">Verification</text>
+    <text x="1447" y="226" text-anchor="middle" class="small">Gemini, evidence only</text>
+
+    <rect class="box2" x="1345" y="282" width="205" height="98" rx="22"/>
+    <text x="1447" y="319" text-anchor="middle" class="label">Clinical Safety</text>
+    <text x="1447" y="348" text-anchor="middle" class="small">Independent risk layer</text>
+  </g>
+
+  <path class="arrow" d="M235 267 H275"/>
+  <path class="arrow" d="M485 267 H525"/>
+  <path class="arrow" d="M745 267 H785"/>
+  <path class="arrow" d="M1000 267 H1040"/>
+  <path class="arrow" d="M1295 208 H1335"/>
+  <path class="arrow" d="M1295 330 H1335"/>
+
+  <g filter="url(#shadow)">
+    <rect x="465" y="425" width="670" height="86" rx="24" fill="#10343b" stroke="url(#accent)" stroke-width="2"/>
+    <text x="800" y="458" text-anchor="middle" class="label">Structured Fact-Check Result</text>
+    <text x="800" y="486" text-anchor="middle" class="small">Verdict • Confidence • Risk Level • Arabic Explanation • Safe Recommendation • PubMed Citations</text>
+  </g>
+  <path class="arrow" d="M1447 380 V406 H1135"/>
+  <path class="arrow" d="M1447 260 V406 H1135"/>
+</svg>
