@@ -39,21 +39,26 @@ def _find_ffmpeg_binary() -> str:
 
 
 def _download_video_from_url(url: str, output_dir: str) -> str:
-    """Download one audio stream only; MythLens transcribes audio and does not need video merging."""
+    """Download the best audio stream only and make ffmpeg discoverable to yt-dlp."""
+    ffmpeg_path = _find_ffmpeg_binary()
+    ffmpeg_dir = os.path.dirname(ffmpeg_path)
+    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+
     ydl_opts = {
         "format": "bestaudio/best",
-        "outtmpl": os.path.join(output_dir, "downloaded_media.%(ext)s"),
+        "outtmpl": os.path.join(output_dir, "downloaded_audio.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
         "restrictfilenames": False,
+        "ffmpeg_location": ffmpeg_dir,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.extract_info(url, download=True)
 
-    matches = glob.glob(os.path.join(output_dir, "downloaded_media.*"))
+    matches = glob.glob(os.path.join(output_dir, "downloaded_audio.*"))
     if not matches:
-        raise RuntimeError(f"No media file was created for URL: {url}")
+        raise RuntimeError(f"No downloadable audio file was created for URL: {url}")
     return sorted(matches)[0]
 
 
