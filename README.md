@@ -218,7 +218,7 @@ Standard metrics treat relevance grades `1` and `2` as relevant. Strict metrics 
 \* Strict Recall is averaged over the 11 queries whose judged candidate pool contained at least one directly relevant (`grade 2`) result.
 
 <p align="center">
-  <img src="docs/images/mythlens-evaluation-dashboard.png" alt="MythLens Hybrid RAG evaluation dashboard" width="96%" />
+  <img src="docs/images/hybrid_rag_dashboard.png" alt="MythLens Hybrid RAG evaluation dashboard" width="96%" />
 </p>
 
 ### Retrieval Improvement
@@ -254,7 +254,7 @@ The score command generates:
 ```text
 outputs/hybrid_eval/hybrid_rag_metrics.json
 outputs/hybrid_eval/hybrid_rag_dashboard.png
-docs/images/mythlens-evaluation-dashboard.png
+docs/images/hybrid_rag_dashboard.png
 ```
 
 A baseline utility is also available:
