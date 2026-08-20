@@ -2,6 +2,37 @@
 
 MythLens is an AI-powered medical myth fact-checking system designed for Arabic, Egyptian Arabic, and English health content. It accepts a direct text claim, a video URL, or an uploaded video/audio file, extracts medical claims, retrieves scientific evidence, and returns a structured verdict with safety guidance and citations.
 
+## Product Demo
+
+### Input Interface
+
+<p align="center">
+  <img src="docs/images/mythlens-home.png" alt="MythLens input interface" width="92%" />
+</p>
+
+### Fact-Check Results
+
+<table>
+  <tr>
+    <td width="50%" align="center"><strong>Evidence-limited / Unproven Example</strong></td>
+    <td width="50%" align="center"><strong>Supported Example</strong></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/mythlens-result-unproven.png" alt="MythLens unproven fact-check result" /></td>
+    <td><img src="docs/images/mythlens-result-supported.png" alt="MythLens supported fact-check result" /></td>
+  </tr>
+</table>
+
+The interface surfaces claim-level verdicts, confidence, evidence sufficiency, clinical risk, safe recommendations, and linked PubMed evidence with PMID identifiers.
+
+## System Architecture
+
+<p align="center">
+  <img src="docs/images/mythlens-architecture.svg" alt="MythLens system architecture" width="100%" />
+</p>
+
+The pipeline separates evidence retrieval, verdict generation, and clinical safety so that a claim can be evaluated for scientific support and medical risk independently.
+
 ## Key Features
 
 - Text, video URL, and video/audio upload input
@@ -71,6 +102,8 @@ MythLens/
 │   ├── api.py            # FastAPI application
 │   └── main.py           # end-to-end integration
 ├── frontend/             # web interface
+├── docs/
+│   └── images/           # README screenshots and architecture diagram
 ├── data/                 # local dataset locations/documentation
 ├── scripts/
 │   └── evaluate_rag.py   # RAG/evaluation report utility

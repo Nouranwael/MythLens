@@ -1,13 +1,13 @@
-# Member 2 Vector Assets
+# Local Vector Assets
 
-The local hybrid RAG uses Member 2's generated FAISS assets. These files are intentionally not committed to GitHub because they are large generated binaries.
+MythLens can use generated FAISS assets for the local side of its hybrid RAG pipeline. These files are intentionally not committed to GitHub because they are generated binary assets.
 
-Copy these two required files from Member 2's handoff into this directory before running local FAISS/BM25 retrieval:
+Place the following files in this directory before running local FAISS/BM25 retrieval:
 
 - `medical_faiss.index` — about 40 MB
 - `chunk_metadata.pkl` — about 9 MB
 
-`medical_embeddings.npy` is not required at runtime by the integrated pipeline and does not need to be copied.
+`medical_embeddings.npy` is not required at runtime by the integrated pipeline.
 
 Expected layout:
 
@@ -18,7 +18,7 @@ backend/rag/vector_store/
 └── README.md
 ```
 
-Alternatively, put the assets somewhere else and set:
+Alternatively, store the assets elsewhere and set:
 
 ```env
 MYTHLENS_VECTOR_PATH=/absolute/path/to/vector_store
