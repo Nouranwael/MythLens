@@ -32,12 +32,10 @@ models/
 outputs/
 temp/
 
-# Member 2 generated vector assets
+# Generated RAG assets
 backend/rag/vector_store/*.index
 backend/rag/vector_store/*.pkl
 backend/rag/vector_store/*.npy
 
-# Keep documentation / placeholders
-!data/**/.gitkeep
+# Keep vector-store documentation
 !backend/rag/vector_store/*.md
-!backend/rag/vector_store/.gitkeep
