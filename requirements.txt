@@ -3,6 +3,7 @@ yt-dlp
 faster-whisper
 pydub
 imageio-ffmpeg
+groq
 
 # Member 2 — medical RAG
 faiss-cpu
