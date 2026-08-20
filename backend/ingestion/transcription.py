@@ -115,6 +115,31 @@ def transcribe_video(video_input: Any) -> str:
     return str(video_input)
 
 
+def _fallback_summary(text: str, claims: list[dict] | None = None) -> str:
+    """Build a safe user-facing fallback using only already extracted content."""
+    claim_sentences = []
+    seen = set()
+    for claim in claims or []:
+        value = str(claim.get("normalized_claim") or claim.get("original_claim") or "").strip()
+        value = re.sub(r"\s+", " ", value).strip(" .")
+        if not value or value.casefold() in seen:
+            continue
+        seen.add(value.casefold())
+        claim_sentences.append(value + ".")
+        if len(claim_sentences) >= 3:
+            break
+
+    if claim_sentences:
+        return " ".join(claim_sentences)
+
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned:
+        return ""
+    parts = [part.strip() for part in re.split(r"(?<=[.!?؟])\s+", cleaned) if part.strip()]
+    fallback = " ".join(parts[:2]) if parts else cleaned
+    return fallback[:600].strip()
+
+
 def summarize_video_transcript(transcript: str, language: str | None = None, claims: list[dict] | None = None) -> str:
     if transcript is None:
         return ""
@@ -123,7 +148,16 @@ def summarize_video_transcript(transcript: str, language: str | None = None, cla
         return ""
     detected = language or detect_language(text)
     normalized = normalize_egyptian_arabic(text) if detected == "ar-EG" else text
-    return summarize_with_groq(normalized, language=detected, claims=claims)
+    try:
+        summary = summarize_with_groq(normalized, language=detected, claims=claims)
+        if summary:
+            return summary
+    except Exception:
+        # Summary generation is presentation-only and must never block claim
+        # extraction, RAG retrieval, or verification. Fall back to content we
+        # already extracted instead of leaking model reasoning or failing.
+        pass
+    return _fallback_summary(normalized, claims=claims)
 
 
 def process_text_input(text: str) -> dict:
